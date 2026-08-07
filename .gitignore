@@ -37,8 +37,14 @@ yarn-error.log*
 # Local fixture media. Deliberately not tracked: these are large (~1.3GB) and
 # derived from commercial discs. Tests use the small synthetic fixtures in
 # tests/fixtures instead; the full set only drives the local `ocr:gate` run.
+#
+# The `*` is not decoration: NTFS forbids `:` in a filename, so copying this
+# corpus onto Windows renames it to U+F022 (the private-use character Windows
+# substitutes). A literal `/sub:idx examples/` therefore matches nothing on
+# Windows and one `git add -A` stages the whole corpus. `?` will not do here
+# either — git matches byte-wise and U+F022 is three UTF-8 bytes.
 /Subtitle Examples/
-/sub:idx examples/
+/sub*idx examples/
 
 # Local working notes, not for publication
 /RUNNING_NOTES.md

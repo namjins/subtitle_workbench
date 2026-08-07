@@ -68,6 +68,15 @@ These do the heavy lifting (video reading, image work, text recognition):
   afterwards — newly installed tools are not visible to a terminal that
   was already open.
 
+  **Windows only:** Tesseract and MKVToolNix's installers do not add
+  themselves to your `PATH`, even after a restart (FFmpeg and ImageMagick's
+  installers do). If `doctor` still reports `tesseract` or `mkvmerge` as
+  missing after a fresh terminal, add these two folders to your `PATH`
+  yourself: open **Settings → System → About → Advanced system settings →
+  Environment Variables**, edit your user `Path` variable, and add
+  `C:\Program Files\Tesseract-OCR` and `C:\Program Files\MKVToolNix`. Then
+  open a new terminal again.
+
 ### Step 3 — Subtitle Workbench
 
 Once this package is published (until then, use "From source" below):

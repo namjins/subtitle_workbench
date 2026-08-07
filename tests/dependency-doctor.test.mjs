@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   formatDoctorReport,
   installInstructionsForPlatform,
+  runBinaryCheck,
   summarizeDoctorReport,
 } from "../lib/dependency-doctor.mjs";
 
@@ -10,6 +11,24 @@ test("prints platform-specific install help", () => {
   assert.match(installInstructionsForPlatform("darwin").join("\n"), /brew install/);
   assert.match(installInstructionsForPlatform("win32").join("\n"), /winget install/);
   assert.match(installInstructionsForPlatform("linux").join("\n"), /apt install/);
+});
+
+test("never tries the `convert` alternate on Windows", () => {
+  const check = {
+    name: "magick",
+    command: "magick",
+    alternates: ["convert"],
+    args: ["-version"],
+    required: true,
+  };
+  const lookup = (name) => (name === "convert" ? "C:\\Windows\\System32\\convert.exe" : null);
+
+  const winResult = runBinaryCheck(check, { platform: "win32", lookup });
+  assert.equal(winResult.path, null);
+  assert.equal(winResult.error, "Not found on PATH");
+
+  const macResult = runBinaryCheck(check, { platform: "darwin", lookup });
+  assert.equal(macResult.path, "C:\\Windows\\System32\\convert.exe");
 });
 
 test("summarizes binary and language failures", () => {
