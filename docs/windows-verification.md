@@ -7,9 +7,14 @@ GUI-and-hardware remainder. Record results (pass/fail, numbers, oddities)
 in RUNNING_NOTES.
 
 Results of the first run, on Windows 11, are in
-`windows-verification-results.md`, including two findings still open: the
-Explorer reveal opening behind the browser, and the OCR gate not being
-passable on Windows.
+`windows-verification-results.md`. Every item below was run; eight findings,
+seven fixed. The one left open by decision is the Explorer reveal opening
+behind the browser.
+
+Worth reading before re-running this list: the file picker only opens behind
+the browser when the browser holds focus, so driving it from a terminal shows
+it working, and the OCR gate needs Tesseract 5.5 or newer — 5.4 recognises
+some frames as empty and drops those cues.
 
 ## Setup (fresh machine, following only the README)
 

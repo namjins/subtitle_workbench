@@ -8,7 +8,7 @@ First run of `docs/windows-verification.md` on real Windows hardware.
 | Machine | Windows 11 Education 26200, x64 |
 | Node | v24.18.0 (npm 11.16.0) |
 | Starting state | Fresh clone, no `node_modules`, none of the four media tools installed |
-| Commits from this session | `c1be788`, `1abbf98`, `f574e6e`, `e81162f`, `19bc3e5`, `06528ac` |
+| Commits from this session | `c1be788`, `1abbf98`, `f574e6e`, `e81162f`, `19bc3e5`, `06528ac`, `045d2ed`, `76cb7dd` |
 
 Tool versions as installed by the README's `winget` line:
 
@@ -23,6 +23,36 @@ Everything below was run, not inspected. GUI steps that cannot be driven from a
 terminal were run by the user and are marked as such; the two z-order findings
 were then reproduced mechanically with a Win32 probe so the fix could be
 measured rather than guessed at.
+
+## Outcome
+
+Every checklist item ran. Eight findings, seven fixed, one open by decision.
+
+| | Finding | State |
+| --- | --- | --- |
+| F1 | `doctor` reports Windows' own `convert.exe` as a broken ImageMagick | Fixed |
+| F2 | `.gitignore` misses the media corpus; NTFS rewrites the `:` | Fixed |
+| F3 | Tesseract and MKVToolNix never reach `PATH` | Fixed |
+| F4 | The file picker opens behind the browser, so the app looks frozen | Fixed |
+| F5 | The Explorer reveal opens behind the browser | Open by decision |
+| F6 | Tesseract 5.4 drops cues it recognises as empty | Fixed |
+| F7 | The desktop shell needs the MSVC build tools, not just Rust | Fixed |
+| F8 | A Tesseract upgrade does not invalidate the conversion cache | Fixed |
+
+The headline result is a negative one: **there is no Windows-specific OCR
+drift.** The gate initially failed here and passes on macOS, which looked like
+platform divergence and was not — with a current Tesseract the two platforms
+agree cue for cue.
+
+The two most valuable findings were invisible to CI and to inspection. F4 only
+reproduces when the browser holds focus, so driving the dialog from a shell
+shows it working. F8 only surfaced because the gate was re-run *after* the F6
+fix and finished suspiciously fast — a cache serving results from the older
+engine, which silently cancelled the fix it was meant to confirm.
+
+Two hypotheses recorded here turned out wrong and are kept as wrong, with the
+evidence that killed them: Apple Vision as the explanation for F6, and putting
+the engine version in the cache key for F8.
 
 ## Setup
 
@@ -51,9 +81,9 @@ data present, "All required dependencies are available".
 | Check | Result |
 | --- | --- |
 | `npm run app:desktop` builds and opens at a sensible size | **Pass**, after F7 |
-| Layout matches macOS | **Not run** — needs a side-by-side eye |
+| Layout matches macOS; no scrollbars on any tool | **Pass** (user) |
 | Kill from Task Manager leaves no `node` bridge process | **Pass** |
-| Dialogs work from the desktop window | **Not run** |
+| Dialogs (Browse, reveal) work from the desktop window | **Pass** (user) |
 
 Rust 1.97.1 and the MSVC C++ build tools were installed for this run; the build
 needed both (F7). The window then opened at **1396×969** on a 1920×1080 monitor
@@ -71,7 +101,9 @@ The orphan check was run twice, because the two shutdowns are not the same test:
 The hard kill is the one worth having: a bridge that survives it keeps an
 authorized HTTP server on a known port with no window to close.
 
-Layout and the desktop-window dialogs are unrun, not passing.
+Layout matches macOS with no scrollbars on any tool, and Browse and reveal both
+work from the desktop window — the shell shares the bridge with the web version,
+so the F4 picker fix applies to it too.
 
 ## OCR quality
 
@@ -310,16 +342,18 @@ actual cause. Confirmed absent: no `vswhere.exe`, no Visual Studio or Build
 Tools installation.
 
 The README now gives the `winget` line for the VCTools workload and explains the
-misleading error. The build was still running when this was written; the desktop
-checklist remains unrun either way.
+misleading error. With the workload installed the shell compiles and runs, and
+the rest of the desktop checklist passes.
 
 ## Still open
 
-- Two desktop shell checks: layout against macOS (including scrollbars on each
-  tool) and the dialogs from the desktop window. Both need eyes on the running
-  app. The shell builds, opens, and survives the orphan test.
-- F5 is settled as documented-only: no code change, the reveal still opens
-  behind the browser by design.
+Every item on `windows-verification.md` has now been run. One finding is open by
+decision rather than by omission:
+
+- **F5**, the Explorer reveal opening behind the browser. Settled as
+  documented-only: no code change, and a working fix is written up in F5 should
+  it ever be wanted. The reveal selects the right file and the window is in the
+  taskbar; only its z-order is wrong.
 
 ## Noted, not acted on
 
