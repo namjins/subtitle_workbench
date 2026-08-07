@@ -214,4 +214,8 @@ Tests run against small fixtures in `tests/fixtures/`.
 
 ## Licence
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — noncommercial use, modification, and sharing; no selling or commercial use.
+[PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify, and share for
+any noncommercial purpose: personal use, hobby projects, research, education,
+charities, public institutions. What it does not allow is commercial use —
+selling this software, charging for it, or building a paid product or service
+on it. If you want a commercial licence, open an issue.
