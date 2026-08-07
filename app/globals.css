@@ -60,17 +60,22 @@ a {
 }
 
 .workbench {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1440px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 28px 0 40px;
+  padding: 12px 0 24px;
 }
 
 .topbar {
   display: flex;
-  align-items: flex-end;
+  align-items: baseline;
   justify-content: space-between;
   gap: 24px;
-  padding: 14px 0 24px;
+  padding: 2px 0 10px;
+}
+
+/* The kicker repeats the h1 verbatim; on the compact header it is noise. */
+.topbar .kicker {
+  display: none;
 }
 
 .kicker,
@@ -91,8 +96,8 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: clamp(2.1rem, 4vw, 4.4rem);
-  line-height: 0.96;
+  font-size: 1.45rem;
+  line-height: 1.1;
   letter-spacing: 0;
 }
 
@@ -111,7 +116,7 @@ h2 {
 }
 
 .tool-card {
-  min-height: 126px;
+  min-height: 88px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -167,7 +172,7 @@ h2 {
 }
 
 .main-panel {
-  padding: 24px;
+  padding: 18px 24px;
 }
 
 
@@ -218,14 +223,14 @@ h2 {
 }
 
 .converter-title h2 {
-  margin-bottom: 6px;
-  font-size: clamp(2rem, 3vw, 3rem);
+  margin-bottom: 4px;
+  font-size: 1.45rem;
 }
 
 .converter-title p {
   margin-bottom: 0;
   color: var(--foreground);
-  font-size: 1.05rem;
+  font-size: 0.95rem;
 }
 
 .text-link,
@@ -322,19 +327,23 @@ h2 {
 
 .about-copy {
   display: grid;
-  gap: 14px;
-  padding-top: 28px;
+  gap: 10px;
+  padding-top: 20px;
+  align-content: start;
 }
 
 .about-copy h2 {
   margin: 0;
+  font-size: 1.02rem;
 }
 
 .about-copy p {
   margin: 0;
-  font-size: 1rem;
-  line-height: 1.5;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--muted);
 }
+
 
 .preview-stack {
   display: grid;
@@ -1012,4 +1021,33 @@ ol.batch-tabs {
   font-size: 0.85rem;
   overflow-x: auto;
   white-space: pre-wrap;
+}
+
+/* On a 1080p-or-wider screen the explainer prose moves beside the workflow
+   instead of below it, so the whole tool fits without scrolling. */
+@media (min-width: 1360px) {
+  .extract-start-page,
+  .batch-page {
+    max-width: none;
+    grid-template-columns: minmax(0, 760px) minmax(280px, 480px);
+    column-gap: 44px;
+    /* The rail spans a big row count so it can sit beside any number of
+       left-column blocks; with a row-gap, every phantom row it spans would
+       add that gap as empty height (measured: ~2,000px of scroll). Spacing
+       between the left blocks comes from margins instead. */
+    row-gap: 0;
+  }
+
+  .extract-start-page > :not(.about-copy),
+  .batch-page > :not(.about-copy) {
+    grid-column: 1;
+    margin-bottom: 22px;
+  }
+
+  .extract-start-page > .about-copy,
+  .batch-page > .about-copy {
+    grid-column: 2;
+    grid-row: 1 / span 99;
+    padding-top: 0;
+  }
 }
