@@ -142,6 +142,41 @@ test("fails loudly instead of writing an empty SRT", async () => {
   });
 });
 
+test("writes an empty SRT for a track that renders nothing", async () => {
+  // A blank forced/overlay track is real — several exist in the fixture corpus
+  // with correctly empty reference SRTs — so it must not be treated as damaged.
+  await withTempDir(async (dir) => {
+    const input = join(dir, "blank.sup");
+    await writeFile(input, buildPgsFixture([{ start: 1, end: 3 }], { blank: true }));
+    const output = join(dir, "blank.srt");
+
+    const result = runCli(["sup-to-srt", "--out", output, "--quiet", "--", input]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /no visible subtitles/iu);
+    assert.equal(existsSync(output), true);
+  });
+});
+
+test("keeps converting a batch after one file fails", async () => {
+  await withTempDir(async (dir) => {
+    const good = join(dir, "good.sup");
+    const bad = join(dir, "bad.sup");
+    await writeFile(good, buildPgsFixture([{ start: 1, end: 3 }]));
+    await writeFile(bad, Buffer.from("not a subtitle file"));
+
+    const result = runCli([
+      "sup-to-srt", "--out-dir", dir, "--quiet", "--", bad, good,
+    ]);
+
+    // The bad file is reported and the exit status is honest...
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /FAILED bad\.sup/u);
+    // ...but the good file after it still converted.
+    assert.equal(existsSync(join(dir, "good.srt")), true, "batch stopped at the first failure");
+  });
+});
+
 test("refuses an input path that is really an option", async () => {
   const result = runCli(["itt-to-srt", "--", "--ocr-command"]);
 

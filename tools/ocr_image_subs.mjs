@@ -8,7 +8,7 @@ import { cacheDirectory, hasCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
 import { toSrtDocument } from "../lib/subtitle-core.mjs";
-import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
+import { countPgsDisplaySets, extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
 const usage = `
 Usage:
@@ -230,14 +230,26 @@ async function convert(
     const images = limit === null ? extractedImages : extractedImages.slice(0, limit);
 
     if (!images.length) {
-      // Do not write an empty file and exit 0. Decoding nothing means the
-      // source was not the format we thought it was, or could not be read —
-      // both of which used to surface as a successful conversion producing a
-      // BOM-only SRT.
-      throw new Error(
-        `No subtitle images could be decoded from ${basename(input)}. ` +
-          "The file may be empty, damaged, or not the format this mode expects.",
+      // Distinguish "not a subtitle file we can read" from "a subtitle file
+      // that genuinely shows nothing". Blank forced/overlay tracks are real —
+      // several exist in the fixture corpus, with correctly empty reference
+      // SRTs — so failing on them would be wrong. Failing only when the
+      // container has no display sets at all still catches the damaged and
+      // wrong-format cases this check was added for.
+      const displaySets =
+        mode === "sup-to-srt" ? await countPgsDisplaySets(input) : 1;
+      if (!displaySets) {
+        throw new Error(
+          `No subtitle data could be read from ${basename(input)}. ` +
+            "The file may be empty, damaged, or not the format this mode expects.",
+        );
+      }
+
+      await writeFile(output, toSrtDocument(""), "utf8");
+      process.stderr.write(
+        `Wrote 0 cues to ${output} (${displaySets} display set(s) contained no visible subtitles)\n`,
       );
+      return;
     }
 
     const results = new Array(images.length);

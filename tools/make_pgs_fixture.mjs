@@ -133,12 +133,15 @@ function drawBars(width, height, barCount) {
 
 export function buildPgsFixture(
   cues,
-  { canvasWidth = 1920, canvasHeight = 1080, cropped = false, paletteUpdate = false } = {},
+  { canvasWidth = 1920, canvasHeight = 1080, cropped = false, paletteUpdate = false, blank = false } = {},
 ) {
   const parts = [];
   const fullPalette = paletteSegment([
     { index: 0, y: 16, cr: 128, cb: 128, alpha: 0 }, // transparent background
-    { index: 1, y: 235, cr: 128, cb: 128, alpha: 255 }, // opaque white text
+    // `blank` makes the text colour transparent too, producing a structurally
+    // valid track that renders nothing — what a blank forced/overlay track
+    // looks like, and distinct from a damaged file.
+    { index: 1, y: 235, cr: 128, cb: 128, alpha: blank ? 0 : 255 },
   ]);
   // A partial update touching only index 0. Replacing the whole palette on
   // such a segment wiped index 1 and blanked the cue entirely.

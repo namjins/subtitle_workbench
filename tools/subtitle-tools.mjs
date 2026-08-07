@@ -158,6 +158,8 @@ async function imageOcr(mode) {
     await mkdir(outDir, { recursive: true });
   }
 
+  const failures = [];
+
   for (const input of inputs) {
     const started = performance.now();
     const inputPath = resolve(input);
@@ -192,7 +194,20 @@ async function imageOcr(mode) {
       jobs,
     });
     process.stderr.write(`Starting ${basename(inputPath)}\n`);
-    run(process.execPath, [ocrScript, ...args]);
+
+    // One unreadable file must not discard the rest of a long batch. Failures
+    // are reported per file and re-raised at the end, so the exit status still
+    // tells the truth. A single-file run still fails immediately.
+    try {
+      run(process.execPath, [ocrScript, ...args]);
+    } catch (error) {
+      failures.push({ input: inputPath, message: error.message });
+      emitJobEvent("job-failed", { mode, input: inputPath, error: error.message });
+      process.stderr.write(`FAILED ${basename(inputPath)}: ${error.message}\n`);
+      if (inputs.length === 1) throw error;
+      continue;
+    }
+
     const durationSeconds = (performance.now() - started) / 1000;
     emitJobEvent("job-finished", {
       mode,
@@ -203,6 +218,16 @@ async function imageOcr(mode) {
     process.stderr.write(
       `Finished ${basename(inputPath)} in ${formatDuration(durationSeconds)}\n`,
     );
+  }
+
+  if (failures.length) {
+    process.stderr.write(
+      `${failures.length} of ${inputs.length} file(s) failed:\n` +
+        failures.map((item) => `  ${basename(item.input)}\n`).join(""),
+    );
+    const error = new Error(`${failures.length} file(s) failed to convert.`);
+    error.exitStatus = 1;
+    throw error;
   }
 }
 
