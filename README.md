@@ -15,53 +15,94 @@ automation work.
 
 ## Install
 
-You need [Node.js](https://nodejs.org/) 22.13 or newer, plus a few media tools.
+Subtitle Workbench runs on your own computer and is built on a few
+well-known free tools. Installing means three steps: get Node.js, get the
+media tools, then get Subtitle Workbench itself. Every command below is
+typed into a terminal — **Terminal** on macOS (find it with Spotlight),
+**PowerShell** on Windows (right-click Start → Terminal), or your usual
+shell on Linux. Copy a line, paste it, press Enter, let it finish.
 
-**macOS**
+### Step 1 — Node.js (the runtime this app is written for)
+
+Install Node.js **22.13 or newer**. Node is maintained by its own project
+and updates through the same channel you install it from — Subtitle
+Workbench deliberately does not bundle its own copy, so security updates
+to Node reach you the normal way.
+
+- **macOS**: `brew install node` (or the installer from
+  [nodejs.org](https://nodejs.org) — choose "LTS")
+- **Windows**: `winget install OpenJS.NodeJS.LTS` (or the nodejs.org
+  installer)
+- **Debian/Ubuntu**: `sudo apt install nodejs npm`
+
+Check it worked — this should print a version number, v22 or higher:
 
 ```bash
-brew install node ffmpeg tesseract imagemagick mkvtoolnix
+node --version
 ```
 
-**Debian / Ubuntu**
+### Step 2 — the media tools
 
-```bash
-sudo apt install nodejs npm ffmpeg tesseract-ocr imagemagick mkvtoolnix zenity
-```
+These do the heavy lifting (video reading, image work, text recognition):
 
-(`zenity` powers the native file-picker dialog; most desktop Linux systems
-already have it.)
+- **macOS**:
 
-**Windows**
+  ```bash
+  brew install ffmpeg tesseract imagemagick mkvtoolnix
+  ```
 
-```powershell
-winget install OpenJS.NodeJS Gyan.FFmpeg UB-Mannheim.TesseractOCR ImageMagick.ImageMagick MoritzBunkus.MKVToolNix
-```
+- **Debian / Ubuntu** (`zenity` powers the file-picker dialog; most
+  desktops already have it):
 
-Close and reopen the terminal afterwards so the newly installed tools are
-found, then run the doctor check below.
+  ```bash
+  sudo apt install ffmpeg tesseract-ocr imagemagick mkvtoolnix zenity
+  ```
 
-Then install the CLI (once this package is published; until then use the
-from-source steps below):
+- **Windows**:
+
+  ```powershell
+  winget install Gyan.FFmpeg UB-Mannheim.TesseractOCR ImageMagick.ImageMagick MoritzBunkus.MKVToolNix
+  ```
+
+  **Windows only:** close the terminal completely and open a new one
+  afterwards — newly installed tools are not visible to a terminal that
+  was already open.
+
+### Step 3 — Subtitle Workbench
+
+Once this package is published (until then, use "From source" below):
 
 ```bash
 npm install -g subtitle-workbench
-subtitle-workbench doctor      # checks every dependency and says what is missing
 ```
 
-Or run from source:
+### Step 4 — check everything
+
+```bash
+subtitle-workbench doctor
+```
+
+`doctor` inspects every tool, prints the version it found, and — if
+anything is missing — the exact install command for your platform. When it
+ends with "All required dependencies are available", you are done:
+
+```bash
+subtitle-workbench ui
+```
+
+opens the app in your browser. The app also runs this same check on
+startup and shows a warning with instructions if something is missing —
+when everything is in place you see nothing.
+
+### From source (developers, or before the npm release)
 
 ```bash
 git clone https://github.com/namjins/subtitle_workbench.git
 cd subtitle_workbench
 npm install
 npm run doctor
+npm run app
 ```
-
-`doctor` is the fastest way to diagnose a broken setup. It reports the path and
-version of each tool, and prints install commands for your platform if anything
-is absent. Use `--feature ocr` or `--feature extract` to check only what a
-particular workflow needs.
 
 ## Run the app
 

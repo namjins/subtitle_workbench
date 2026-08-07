@@ -46,8 +46,10 @@ CER points — see `portable-ocr-plan.md` for the bar to revive it).
    - Build each platform on its native CI runner.
    - PATH resolution for GUI-launched apps (a double-clicked app does not
      inherit the shell PATH; node and Homebrew paths must be found).
-   - First-run experience: walk a non-expert through installing the tools,
-     driven by `doctor`, without assuming a terminal.
+   - First-run experience: walk a non-expert through installing Node and
+     the tools, driven by `doctor`, without assuming a terminal. Node is
+     deliberately not bundled (security updates stay the Node project's
+     release channel, not ours), so the walkthrough carries it.
    - Auto-update and uninstall story.
 
 5. **Smaller known items** — see RUNNING_NOTES "Outstanding": preferences in
