@@ -352,6 +352,19 @@ async function startUi() {
   }
 
   process.on("SIGINT", () => server.close(() => process.exit(0)));
+
+  // The desktop shell passes --exit-with-parent and holds our stdin pipe.
+  // When the shell dies — cleanly, by signal, or by SIGKILL — the pipe
+  // closes and we exit. Watching the pipe rather than trusting the shell's
+  // exit handler means an orphaned bridge cannot happen: a process that can
+  // read files and spawn commands must not outlive the window that owns it.
+  if (hasFlag("--exit-with-parent")) {
+    process.stdin.resume();
+    const exitWithParent = () => server.close(() => process.exit(0));
+    process.stdin.on("end", exitWithParent);
+    process.stdin.on("close", exitWithParent);
+    process.stdin.on("error", exitWithParent);
+  }
 }
 
 async function peekSup() {

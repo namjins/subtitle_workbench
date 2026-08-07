@@ -42,3 +42,5 @@ yarn-error.log*
 
 # Local working notes, not for publication
 /RUNNING_NOTES.md
+src-tauri/target/
+src-tauri/gen/

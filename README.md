@@ -212,6 +212,17 @@ npm run dev       # UI dev server; run `npm run cli -- ui --dev` alongside it
 
 Tests run against small fixtures in `tests/fixtures/`.
 
+### Desktop app (work in progress)
+
+`src-tauri/` holds a Tauri shell around the same UI: it starts the local
+bridge on a private port and opens a native window on it, so the bridge's
+job queue, authorization and native file picking are shared with the web
+version. It needs a [Rust toolchain](https://rustup.rs):
+
+```bash
+npm run app:desktop   # tauri dev: builds the UI, compiles the shell, opens the window
+```
+
 ## Licence
 
 [PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify, and share for
