@@ -8,12 +8,12 @@ import {
   resolveUiAssetPath,
 } from "../lib/local-bridge-server.mjs";
 
-async function withServer(uiRoot, run) {
-  const server = createLocalBridgeServer({ uiRoot });
+async function withServer(uiRoot, run, options = {}) {
+  const server = createLocalBridgeServer({ uiRoot, ...options });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
   try {
-    await run(`http://127.0.0.1:${port}`);
+    await run(`http://127.0.0.1:${port}`, server.sessionToken);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -60,7 +60,7 @@ test("never resolves a UI path outside the build directory", () => {
 test("serves the built UI and keeps the API reachable", async () => {
   const uiRoot = await buildUiRoot();
   try {
-    await withServer(uiRoot, async (origin) => {
+    await withServer(uiRoot, async (origin, token) => {
       const page = await fetch(`${origin}/`);
       assert.equal(page.status, 200);
       assert.match(page.headers.get("content-type") ?? "", /^text\/html\b/);
@@ -71,7 +71,9 @@ test("serves the built UI and keeps the API reachable", async () => {
       assert.match(asset.headers.get("content-type") ?? "", /javascript/);
 
       // The API must not be shadowed by the static handler.
-      const health = await fetch(`${origin}/health`);
+      const health = await fetch(`${origin}/health`, {
+        headers: { "x-subtitle-workbench-token": token },
+      });
       assert.equal(health.status, 200);
       assert.deepEqual(await health.json(), { ok: true });
     });
@@ -83,9 +85,11 @@ test("serves the built UI and keeps the API reachable", async () => {
 test("does not serve files from outside the build directory over HTTP", async () => {
   const uiRoot = await buildUiRoot();
   try {
-    await withServer(uiRoot, async (origin) => {
+    await withServer(uiRoot, async (origin, token) => {
       for (const path of ["/../package.json", "/%2e%2e%2fpackage.json"]) {
-        const response = await fetch(`${origin}${path}`);
+        const response = await fetch(`${origin}${path}`, {
+          headers: { "x-subtitle-workbench-token": token },
+        });
         assert.equal(response.status, 404, `${path} should not be served`);
         assert.doesNotMatch(await response.text(), /subtitle-workbench/);
       }
@@ -98,14 +102,16 @@ test("does not serve files from outside the build directory over HTTP", async ()
 test("falls back to the SPA entry for extensionless routes only", async () => {
   const uiRoot = await buildUiRoot();
   try {
-    await withServer(uiRoot, async (origin) => {
+    await withServer(uiRoot, async (origin, token) => {
       const route = await fetch(`${origin}/some/client/route`);
       assert.equal(route.status, 200);
       assert.match(await route.text(), /<title>Subtitle Workbench<\/title>/);
 
       // A missing asset must 404 rather than silently returning HTML, which
       // would otherwise surface as a confusing JS parse error in the browser.
-      const missing = await fetch(`${origin}/assets/missing.js`);
+      const missing = await fetch(`${origin}/assets/missing.js`, {
+        headers: { "x-subtitle-workbench-token": token },
+      });
       assert.equal(missing.status, 404);
     });
   } finally {

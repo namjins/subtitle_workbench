@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { parseArgv } from "../lib/cli-args.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
@@ -17,10 +18,19 @@ Requirements:
   ffmpeg, ffprobe, tesseract, magick
 `;
 
+const cli = parseArgv(process.argv, {
+  valueOptions: new Set([
+    "--jobs",
+    "--lang",
+    "--limit",
+    "--ocr-command",
+    "--ocr-engine",
+    "--out",
+  ]),
+});
+
 function readOption(name, fallback = null) {
-  const index = process.argv.indexOf(name);
-  if (index === -1) return fallback;
-  return process.argv[index + 1] ?? fallback;
+  return cli.option(name, fallback);
 }
 
 function run(command, args, options = {}) {
@@ -301,11 +311,17 @@ async function convert(
 }
 
 async function main() {
-  const mode = process.argv[2];
-  const inputArg = process.argv[3];
-  if (!mode || !inputArg || process.argv.includes("--help")) {
+  const mode = cli.command;
+  const [inputArg] = cli.positionals;
+  if (cli.has("--help")) {
     process.stderr.write(usage);
-    process.exit(mode ? 0 : 1);
+    return;
+  }
+  if (!mode || !inputArg) {
+    // Exit non-zero: a wrapper that saw 0 here would report a successful
+    // conversion that never produced a file.
+    process.stderr.write(usage);
+    process.exit(1);
   }
 
   const engine = createOcrEngine(readOption("--ocr-engine", "auto"), {
@@ -336,11 +352,20 @@ async function main() {
   const output =
     readOption("--out") ??
     join(dirname(input), `${basename(input, extname(input))}.srt`);
-  const keepTemp = process.argv.includes("--keep-temp");
-  const quiet = process.argv.includes("--quiet");
+  const keepTemp = cli.has("--keep-temp");
+  const quiet = cli.has("--quiet");
   const jobs = normalizeJobs(readOption("--jobs", process.env.JOBS ?? "auto"));
   const limitValue = readOption("--limit");
-  const limit = limitValue === null ? null : Math.max(0, Number(limitValue) || 0);
+  let limit = null;
+  if (limitValue !== null) {
+    // Previously `Number(x) || 0`, so `--limit abc` silently converted nothing
+    // and still exited 0.
+    const parsed = Number(limitValue);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error(`--limit must be a non-negative number, got "${limitValue}".`);
+    }
+    limit = Math.floor(parsed);
+  }
 
   await convert(
     input,

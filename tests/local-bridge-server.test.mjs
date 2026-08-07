@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { detectSafeJobs } from "../lib/cpu-jobs.mjs";
+import { detectSafeJobs, maxAutomaticJobs } from "../lib/cpu-jobs.mjs";
 import {
   safeUploadName,
   validateJob,
@@ -24,7 +24,6 @@ test("validates local bridge job requests", () => {
       fps: undefined,
       jobs: 4,
       ocrEngine: "auto",
-      ocrCommand: undefined,
     },
   );
   assert.throws(() => validateJob({ command: "rm", inputs: ["x"] }), /Unsupported/u);
@@ -46,7 +45,6 @@ test("validates ITT bridge jobs with FPS", () => {
       outDir: undefined,
       jobs: detectSafeJobs(),
       ocrEngine: "auto",
-      ocrCommand: undefined,
     },
   );
 });
@@ -87,20 +85,40 @@ test("validates native file picker requests", () => {
   assert.deepEqual(validatePickRequest({}), { extensions: [] });
 });
 
-test("returns CORS headers for local browser clients", async () => {
-  const { createLocalBridgeServer } = await import("../lib/local-bridge-server.mjs");
-  const server = createLocalBridgeServer();
-  let headers = {};
-  server.emit("request", {
-    method: "OPTIONS",
-    url: "/jobs",
-    headers: { origin: "http://localhost:3001" },
-  }, {
-    writeHead: (_status, values) => {
-      headers = values;
-    },
-    end() {},
+test("refuses ocrCommand from the network", () => {
+  // ocrCommand names a binary to execute, so it stays a CLI/env-only option
+  // and is dropped rather than forwarded.
+  const job = validateJob({
+    command: "sup-to-srt",
+    inputs: ["/tmp/movie.sup"],
+    ocrCommand: "/bin/sh",
   });
+  assert.equal("ocrCommand" in job, false);
 
-  assert.equal(headers["access-control-allow-origin"], "http://localhost:3001");
+  // The engine that would need it is not selectable over HTTP either.
+  assert.throws(
+    () =>
+      validateJob({
+        command: "sup-to-srt",
+        inputs: ["/tmp/movie.sup"],
+        ocrEngine: "external-command",
+      }),
+    /Unsupported OCR engine/u,
+  );
+});
+
+test("rejects job inputs that look like options", () => {
+  assert.throws(
+    () => validateJob({ command: "sup-to-srt", inputs: ["--ocr-command"] }),
+    /not options/u,
+  );
+});
+
+test("clamps a network-supplied job count", () => {
+  const job = validateJob({
+    command: "sup-to-srt",
+    inputs: ["/tmp/movie.sup"],
+    jobs: 10000,
+  });
+  assert.ok(job.jobs <= maxAutomaticJobs, `expected clamped jobs, got ${job.jobs}`);
 });

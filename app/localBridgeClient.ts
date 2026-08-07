@@ -48,13 +48,30 @@ export type BridgeVideoTrack = {
 // to accept.
 const bridgeOrigin = import.meta.env.DEV ? "http://127.0.0.1:8765" : "";
 
+declare global {
+  interface Window {
+    __SUBTITLE_WORKBENCH_TOKEN__?: string;
+  }
+}
+
+/**
+ * The bridge injects a per-session token into the page it serves, so only a
+ * document that came from the bridge can authenticate. Under `vite dev` the
+ * page is served by Vite and has no token; the bridge must then be started
+ * with --dev, which allowlists the dev origin instead.
+ */
+function bridgeHeaders(extra: Record<string, string> = {}) {
+  const token = typeof window === "undefined" ? undefined : window.__SUBTITLE_WORKBENCH_TOKEN__;
+  return token ? { ...extra, "x-subtitle-workbench-token": token } : extra;
+}
+
 export async function runBridgeJob(
   job: BridgeJob,
   onEvent: (event: BridgeEvent) => void,
 ) {
   const response = await fetch(`${bridgeOrigin}/jobs`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: bridgeHeaders({ "content-type": "application/json" }),
     body: JSON.stringify(job),
   });
   if (!response.ok || !response.body) {
@@ -91,6 +108,7 @@ export async function uploadBridgeFiles(files: File[]) {
 
   const response = await fetch(`${bridgeOrigin}/uploads`, {
     method: "POST",
+    headers: bridgeHeaders(),
     body: formData,
   });
   if (!response.ok) {
@@ -102,7 +120,7 @@ export async function uploadBridgeFiles(files: File[]) {
 export async function pickBridgeFile(extensions: string[]) {
   const response = await fetch(`${bridgeOrigin}/files/pick`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: bridgeHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ extensions }),
   });
   if (!response.ok) {
@@ -114,7 +132,7 @@ export async function pickBridgeFile(extensions: string[]) {
 export async function inspectBridgeVideo(input: string) {
   const response = await fetch(`${bridgeOrigin}/videos/inspect`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: bridgeHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ input }),
   });
   if (!response.ok) {
@@ -129,7 +147,7 @@ export async function inspectBridgeVideo(input: string) {
 export async function extractBridgeVideo(input: string, tracks: BridgeVideoTrack[]) {
   const response = await fetch(`${bridgeOrigin}/videos/extract`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: bridgeHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ input, tracks }),
   });
   if (!response.ok) {

@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildDoctorReport, formatDoctorReport } from "../lib/dependency-doctor.mjs";
+import { parseArgv } from "../lib/cli-args.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { formatJobEvent } from "../lib/local-job-events.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
@@ -44,46 +45,45 @@ Examples:
   subtitle-workbench inspect-missing-ocr --details ./ocr-output/details.json --examples-dir ./examples --out-dir ./ocr-misses
 `;
 
+const valueOptions = new Set([
+  "--candidate",
+  "--candidate-dir",
+  "--count",
+  "--csv",
+  "--details",
+  "--examples-dir",
+  "--fixture-metadata",
+  "--fps",
+  "--jobs",
+  "--kind",
+  "--lang",
+  "--limit",
+  "--max-text-mismatches",
+  "--max-cer",
+  "--max-end-mismatches",
+  "--max-extra",
+  "--max-missing",
+  "--ocr-engine",
+  "--ocr-command",
+  "--out",
+  "--out-dir",
+  "--port",
+  "--reference",
+  "--tolerance",
+]);
+
+const cli = parseArgv(process.argv, { valueOptions });
+
 function option(name, fallback = null) {
-  const index = process.argv.indexOf(name);
-  if (index === -1) return fallback;
-  return process.argv[index + 1] ?? fallback;
+  return cli.option(name, fallback);
+}
+
+function hasFlag(name) {
+  return cli.has(name);
 }
 
 function positionalArgs() {
-  const valueOptions = new Set([
-    "--candidate",
-    "--candidate-dir",
-    "--count",
-    "--csv",
-    "--details",
-    "--examples-dir",
-    "--fps",
-    "--jobs",
-    "--lang",
-    "--limit",
-    "--max-text-mismatches",
-    "--max-cer",
-    "--max-end-mismatches",
-    "--max-extra",
-    "--max-missing",
-    "--ocr-engine",
-    "--ocr-command",
-    "--out",
-    "--out-dir",
-    "--reference",
-    "--tolerance",
-  ]);
-  const args = [];
-  for (let index = 3; index < process.argv.length; index += 1) {
-    const arg = process.argv[index];
-    if (valueOptions.has(arg)) {
-      index += 1;
-    } else if (!arg.startsWith("--")) {
-      args.push(arg);
-    }
-  }
-  return args;
+  return cli.positionals;
 }
 
 function run(command, args, options = {}) {
@@ -103,7 +103,7 @@ function run(command, args, options = {}) {
 }
 
 function emitJobEvent(type, fields = {}) {
-  if (process.argv.includes("--json-events")) {
+  if (hasFlag("--json-events")) {
     process.stdout.write(formatJobEvent(type, fields));
   }
 }
@@ -133,24 +133,27 @@ async function imageOcr(mode) {
   for (const input of inputs) {
     const started = performance.now();
     const inputPath = resolve(input);
-    const args = [mode, inputPath, "--lang", option("--lang", "eng")];
+    const args = [mode, "--lang", option("--lang", "eng")];
     const outputPath = outDir
       ? join(resolve(outDir), `${basename(inputPath, extname(inputPath))}.srt`)
       : out
         ? resolve(out)
         : join(dirname(inputPath), `${basename(inputPath, extname(inputPath))}.srt`);
-    if (outputPath && process.argv.includes("--skip-existing") && existsSync(resolve(outputPath))) {
+    if (outputPath && hasFlag("--skip-existing") && existsSync(resolve(outputPath))) {
       process.stderr.write(`Skipping existing ${resolve(outputPath)}\n`);
       continue;
     }
     args.push("--out", resolve(outputPath));
-    if (process.argv.includes("--keep-temp")) args.push("--keep-temp");
-    if (process.argv.includes("--quiet")) args.push("--quiet");
+    if (hasFlag("--keep-temp")) args.push("--keep-temp");
+    if (hasFlag("--quiet")) args.push("--quiet");
     if (option("--limit")) args.push("--limit", option("--limit"));
     const jobs = normalizeJobs(option("--jobs", "auto"));
     args.push("--jobs", String(jobs));
     args.push("--ocr-engine", option("--ocr-engine", "auto"));
     if (option("--ocr-command")) args.push("--ocr-command", option("--ocr-command"));
+    // Terminator last: the input path is the only positional, and it must not
+    // be re-interpreted as an option by the child.
+    args.push("--", inputPath);
     emitJobEvent("job-started", {
       mode,
       input: inputPath,
@@ -196,7 +199,7 @@ async function textToSrt(mode) {
       : out
         ? resolve(out)
         : join(dirname(inputPath), outputNameFor(basename(inputPath)));
-    if (process.argv.includes("--skip-existing") && existsSync(outputPath)) {
+    if (hasFlag("--skip-existing") && existsSync(outputPath)) {
       process.stderr.write(`Skipping existing ${outputPath}\n`);
       continue;
     }
@@ -230,16 +233,16 @@ function formatDuration(seconds) {
 }
 
 function benchmarkOcr() {
-  run("node", [benchmarkScript, ...process.argv.slice(3)]);
+  run("node", [benchmarkScript, ...cli.flagArgs(), "--", ...positionalArgs()]);
 }
 
 function inspectMissingOcr() {
-  run("node", [missingImagesScript, ...process.argv.slice(3)]);
+  run("node", [missingImagesScript, ...cli.flagArgs(), "--", ...positionalArgs()]);
 }
 
 function doctor() {
   const report = buildDoctorReport({ language: option("--lang", "eng") });
-  if (process.argv.includes("--json")) {
+  if (hasFlag("--json")) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
     process.stdout.write(formatDoctorReport(report));
@@ -262,13 +265,25 @@ async function startUi() {
 
   const port = Number(option("--port", process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT ?? "8765"));
   const host = process.env.SUBTITLE_WORKBENCH_BRIDGE_HOST ?? "127.0.0.1";
-  const server = createLocalBridgeServer();
+  // Under `npm run dev` the page is served by Vite on another port, so it has
+  // no injected token. Allowlisting that origin is opt-in and never on by
+  // default, because it widens what may talk to the bridge.
+  const devOrigins = hasFlag("--dev")
+    ? ["http://localhost:3000", "http://127.0.0.1:3000"]
+    : [];
+  const server = createLocalBridgeServer({
+    devOrigins,
+    token: hasFlag("--dev") ? null : undefined,
+  });
 
   await new Promise((resolvePromise) => server.listen(port, host, resolvePromise));
   const url = `http://${host}:${port}/`;
   process.stderr.write(`Subtitle Workbench is running at ${url}\n`);
+  if (hasFlag("--dev")) {
+    process.stderr.write("Development mode: accepting requests from the Vite dev origin.\n");
+  }
 
-  if (!process.argv.includes("--no-open")) {
+  if (!hasFlag("--no-open")) {
     const opener =
       process.platform === "darwin"
         ? ["open", [url]]
@@ -296,7 +311,7 @@ async function peekSup() {
 }
 
 async function main() {
-  const command = process.argv[2];
+  const command = cli.command;
   if (!command || command === "--help" || command === "-h") {
     process.stdout.write(usage);
     return;
