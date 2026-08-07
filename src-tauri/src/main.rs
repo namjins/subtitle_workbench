@@ -120,9 +120,28 @@ fn main() {
             let url = format!("http://127.0.0.1:{port}/")
                 .parse()
                 .expect("bridge URL is always valid");
+
+            // The measured natural size of the tallest tool at the wide
+            // two-column layout (Extract, 924px at 1500px wide): opening at
+            // this size shows every tool without scrollbars. Clamped to the
+            // monitor — with headroom for the menu bar / task bar, which the
+            // reported monitor size includes — so a small screen gets a
+            // window that fits it instead.
+            let mut width: f64 = 1500.0;
+            let mut height: f64 = 930.0;
+            if let Ok(Some(monitor)) = app.primary_monitor() {
+                let scale = monitor.scale_factor();
+                let logical_width = monitor.size().width as f64 / scale;
+                let logical_height = monitor.size().height as f64 / scale;
+                width = width.min(logical_width - 20.0).max(800.0);
+                height = height.min(logical_height - 80.0).max(600.0);
+            }
+
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("Subtitle Workbench")
-                .inner_size(1240.0, 860.0)
+                .inner_size(width, height)
+                .min_inner_size(900.0, 600.0)
+                .center()
                 .build()?;
             Ok(())
         })
