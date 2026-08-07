@@ -6,6 +6,10 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildDoctorReport, formatDoctorReport } from "../lib/dependency-doctor.mjs";
 import { parseArgv } from "../lib/cli-args.mjs";
+import {
+  extractSubtitlesFromDirectory,
+  parseLanguageList,
+} from "../lib/batch-extract.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { formatJobEvent } from "../lib/local-job-events.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
@@ -17,7 +21,6 @@ import {
 } from "../lib/subtitle-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extractorScript = join(root, "tools", "extract_english_subs.sh");
 const ocrScript = join(root, "tools", "ocr_image_subs.mjs");
 const benchmarkScript = join(root, "tools", "benchmark_ocr.mjs");
 const missingImagesScript = join(root, "tools", "extract_missing_sup_images.mjs");
@@ -27,8 +30,8 @@ Subtitle Workbench CLI
 
 Usage:
   subtitle-workbench ui [--port 8765] [--no-open]
-  subtitle-workbench doctor [--json] [--lang eng]
-  subtitle-workbench extract-english <video-dir> [--jobs auto|4]
+  subtitle-workbench doctor [--json] [--lang eng] [--feature ocr|extract]
+  subtitle-workbench extract-english <video-dir> [--languages eng,spa|--all-languages] [--jobs auto|4]
   subtitle-workbench peek-sup <file.sup> [--out-dir dir] [--count 3]
   subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command command] [--skip-existing] [--quiet] [--json-events]
   subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command command] [--skip-existing] [--quiet] [--json-events]
@@ -57,11 +60,13 @@ const valueOptions = new Set([
   "--csv",
   "--details",
   "--examples-dir",
+  "--feature",
   "--fixture-metadata",
   "--fps",
   "--jobs",
   "--kind",
   "--lang",
+  "--languages",
   "--limit",
   "--max-text-mismatches",
   "--max-cer",
@@ -114,14 +119,30 @@ function emitJobEvent(type, fields = {}) {
   }
 }
 
-function extractEnglish() {
+async function extractEnglish() {
   const [videoDir] = positionalArgs();
   if (!videoDir) throw new Error("No video directory provided.");
-  const jobs = String(normalizeJobs(option("--jobs", "auto")));
-  run(extractorScript, ["-j", jobs], {
-    cwd: resolve(videoDir),
-    env: { ...process.env, JOBS: jobs },
+
+  const languages = parseLanguageList(
+    hasFlag("--all-languages") ? "all" : option("--languages", "eng"),
+  );
+  const result = await extractSubtitlesFromDirectory({
+    directory: resolve(videoDir),
+    languages,
+    jobs: normalizeJobs(option("--jobs", "auto")),
+    skipExisting: true,
+    onLog: (message) => process.stderr.write(`${message}\n`),
   });
+
+  process.stderr.write(
+    `Scanned ${result.videos} file(s), wrote ${result.extracted.length} subtitle file(s).\n`,
+  );
+  // The shell version exited 0 even when every track failed.
+  if (result.failures.length) {
+    const error = new Error(`${result.failures.length} file(s) failed to extract.`);
+    error.exitStatus = 1;
+    throw error;
+  }
 }
 
 async function imageOcr(mode) {
@@ -169,7 +190,7 @@ async function imageOcr(mode) {
       jobs,
     });
     process.stderr.write(`Starting ${basename(inputPath)}\n`);
-    run(ocrScript, args);
+    run(process.execPath, [ocrScript, ...args]);
     const durationSeconds = (performance.now() - started) / 1000;
     emitJobEvent("job-finished", {
       mode,
@@ -239,15 +260,18 @@ function formatDuration(seconds) {
 }
 
 function benchmarkOcr() {
-  run("node", [benchmarkScript, ...cli.flagArgs(), "--", ...positionalArgs()]);
+  run(process.execPath, [benchmarkScript, ...cli.flagArgs(), "--", ...positionalArgs()]);
 }
 
 function inspectMissingOcr() {
-  run("node", [missingImagesScript, ...cli.flagArgs(), "--", ...positionalArgs()]);
+  run(process.execPath, [missingImagesScript, ...cli.flagArgs(), "--", ...positionalArgs()]);
 }
 
 function doctor() {
-  const report = buildDoctorReport({ language: option("--lang", "eng") });
+  const report = buildDoctorReport({
+    language: option("--lang", "eng"),
+    feature: option("--feature"),
+  });
   if (hasFlag("--json")) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
@@ -328,7 +352,7 @@ async function main() {
   } else if (command === "ui") {
     await startUi();
   } else if (command === "extract-english") {
-    extractEnglish();
+    await extractEnglish();
   } else if (command === "peek-sup") {
     await peekSup();
   } else if (command === "sup-to-srt") {

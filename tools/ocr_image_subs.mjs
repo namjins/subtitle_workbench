@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { parseArgv } from "../lib/cli-args.mjs";
+import { cacheDirectory, hasCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
 import { toSrtDocument } from "../lib/subtitle-core.mjs";
@@ -83,8 +84,7 @@ function runAsync(command, args, options = {}) {
 }
 
 function checkBinary(command) {
-  const result = spawnSync("which", [command], { encoding: "utf8" });
-  if (result.status !== 0) {
+  if (!hasCommand(command)) {
     throw new Error(`Missing required binary: ${command}`);
   }
 }
@@ -214,7 +214,9 @@ async function convert(
   jobs,
   limit = null,
 ) {
-  const scratchRoot = join(process.cwd(), ".tmp");
+  // Not process.cwd(): runs started from a read-only or network volume failed,
+  // and successful ones scattered scratch PNGs next to the user's media.
+  const scratchRoot = cacheDirectory("scratch");
   await mkdir(scratchRoot, { recursive: true });
   await mkdir(dirname(output), { recursive: true });
   const workingDirectory = await mkdtemp(join(scratchRoot, "subtitle-ocr-"));
@@ -334,8 +336,11 @@ async function main() {
     mode,
     ocrCommand: readOption("--ocr-command"),
   });
+  // The pipeline always needs ImageMagick, whichever engine is selected.
+  // Checking only engine.requiredBinaries let a Vision run (which declares
+  // just swiftc) pass preflight and then die minutes later on the first image.
   checkBinary("ffmpeg");
-  checkBinary("ffprobe");
+  checkBinary("magick");
   for (const binary of engine.requiredBinaries) {
     checkBinary(binary);
   }

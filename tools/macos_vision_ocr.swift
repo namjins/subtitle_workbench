@@ -57,6 +57,13 @@ func recognize(imagePath: String, language: String) throws -> OcrResult {
     let supportedLanguages = (try? request.supportedRecognitionLanguages()) ?? []
     if supportedLanguages.contains(language) {
         request.recognitionLanguages = [language]
+    } else {
+        // Vision silently falls back to its default (English) for an
+        // unsupported language, so say so rather than reporting a confident
+        // result recognised with the wrong model.
+        FileHandle.standardError.write(
+            Data("warning: Vision does not support \(language); using its default language\n".utf8)
+        )
     }
 
     let handler = VNImageRequestHandler(cgImage: image, options: [:])
@@ -70,12 +77,29 @@ func recognize(imagePath: String, language: String) throws -> OcrResult {
         )
     }
 
-    let observations = (request.results ?? []).sorted { left, right in
-        let yDelta = abs(left.boundingBox.midY - right.boundingBox.midY)
-        if yDelta > 0.03 {
-            return left.boundingBox.midY > right.boundingBox.midY
+    // Group into lines first, then sort within each line.
+    //
+    // The previous comparator ("same line if |dY| <= 0.03, else by Y, else by
+    // X") is not a strict weak ordering: with three closely spaced baselines
+    // A~B, B~C but A!~C, it is intransitive. Swift documents sorted(by:) as
+    // undefined for such predicates, so multi-line cues could come back in a
+    // scrambled order.
+    let lineTolerance = 0.03
+    var groupedRows: [[VNRecognizedTextObservation]] = []
+    for observation in (request.results ?? []).sorted(by: {
+        $0.boundingBox.midY > $1.boundingBox.midY
+    }) {
+        if let index = groupedRows.indices.last,
+           let reference = groupedRows[index].first,
+           abs(reference.boundingBox.midY - observation.boundingBox.midY) <= lineTolerance {
+            groupedRows[index].append(observation)
+        } else {
+            groupedRows.append([observation])
         }
-        return left.boundingBox.minX < right.boundingBox.minX
+    }
+
+    let observations = groupedRows.flatMap { row in
+        row.sorted { $0.boundingBox.minX < $1.boundingBox.minX }
     }
 
     var lines: [OcrLine] = []
