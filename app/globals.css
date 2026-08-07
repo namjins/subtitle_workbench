@@ -499,10 +499,7 @@ h2 {
 }
 
 .batch-file-box {
-  min-height: 254px;
-  align-items: flex-start;
   border-style: dashed;
-  padding-top: 16px;
 }
 
 .upload-success {
