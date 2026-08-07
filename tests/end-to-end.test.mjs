@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -184,4 +184,71 @@ test("refuses an input path that is really an option", async () => {
   // The string still appears, because it is named as the missing input. What
   // matters is that it was treated as a path rather than honoured as a flag.
   assert.match(result.stderr, /ENOENT|no such file|not found/iu);
+});
+
+test("counts a candidate cue in a declared reference gap as unverified, not extra", async () => {
+  // The Matrix's retail reference SRT skips a cue the stream provably
+  // displays ("I..." at 01:39:54.5, verified from the decoded bitmap), so the
+  // correct OCR reading counted as an extra cue and failed the gate. Fixture
+  // metadata can declare such verified gaps; a cue inside one is unverified.
+  await withTempDir(async (dir) => {
+    const examples = join(dir, "examples");
+    const candidates = join(dir, "candidates");
+    await mkdir(examples, { recursive: true });
+    await mkdir(candidates, { recursive: true });
+
+    // Pairing scans for source files by name; the benchmark never reads them.
+    await writeFile(join(examples, "movie.sup"), "");
+    await writeFile(
+      join(examples, "movie-eng.srt"),
+      "1\n00:00:01,000 --> 00:00:02,000\nHello\n",
+    );
+    await writeFile(
+      join(candidates, "movie.srt"),
+      [
+        "1",
+        "00:00:01,000 --> 00:00:02,000",
+        "Hello",
+        "",
+        "2",
+        "00:00:05,000 --> 00:00:06,000",
+        "I...",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(dir, "metadata.json"),
+      JSON.stringify({
+        examples: {
+          movie: {
+            status: "reference-missing-cue",
+            knownReferenceGaps: [{ start: 5, end: 6 }],
+          },
+        },
+      }),
+    );
+
+    const gateArgs = [
+      "benchmark-ocr",
+      "--examples-dir",
+      examples,
+      "--candidate-dir",
+      candidates,
+      "--max-extra",
+      "0",
+      "--json",
+    ];
+
+    // Without the metadata the same comparison must keep failing: the gap
+    // machinery only excuses cues someone has explicitly verified.
+    const undeclared = runCli(gateArgs);
+    assert.notEqual(undeclared.status, 0);
+
+    const declared = runCli([...gateArgs, "--fixture-metadata", join(dir, "metadata.json")]);
+    assert.equal(declared.status, 0, declared.stderr);
+    const report = JSON.parse(declared.stdout);
+    assert.equal(report.rows[0].extra, 0);
+    assert.equal(report.rows[0].unverified, 1);
+    assert.equal(report.rows[0].note, "reference-missing-cue");
+  });
 });

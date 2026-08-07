@@ -42,25 +42,35 @@ async function readFixtureMetadata(path) {
 }
 
 function metadataForFixture(metadata, examplesDir, name) {
-  const normalizedExamplesDir = examplesDir.replace(/\\/g, "/");
-  const candidates = [
-    name,
-    `${basename(normalizedExamplesDir)}/${name}`,
-    normalizedExamplesDir.endsWith("sub:idx examples")
-      ? `sub:idx examples/${name}`
-      : null,
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    if (metadata[candidate]) return metadata[candidate];
-  }
+  // The metadata file nests fixtures under their examples directory's
+  // basename. The previous lookup probed flat slash-joined keys instead, so
+  // no annotation ever matched and every note was silently dropped.
+  //
   // Deliberately no bare-name search across other groups: with two fixture
-  // sets in play that attached one set's provenance note to the other set's
-  // results.
-  return null;
+  // sets in play that would attach one set's provenance note to the other
+  // set's results.
+  const group = basename(examplesDir.replace(/\\/g, "/"));
+  return metadata[group]?.[name] ?? null;
+}
+
+// A reference SRT can be provably incomplete: the stream displays a cue that
+// the retail transcription skipped. Such gaps are declared per fixture in the
+// metadata file — only after verifying against the decoded bitmap, never from
+// OCR output alone — and a candidate cue starting inside one is counted as
+// unverified rather than extra: the candidate found something the reference
+// cannot confirm or deny.
+function isInsideReferenceGap(cue, gaps) {
+  return gaps.some(
+    (gap) => cue.start >= gap.start - 0.5 && cue.start <= gap.end + 0.5,
+  );
 }
 
 function summarize(name, metrics, metadata = null) {
-  const unverified = metrics.referenceCues === 0 ? metrics.extra.length : 0;
+  const gaps = metadata?.knownReferenceGaps ?? [];
+  const unverified =
+    metrics.referenceCues === 0
+      ? metrics.extra.length
+      : metrics.extra.filter((cue) => isInsideReferenceGap(cue, gaps)).length;
   return {
     name,
     metadata,
@@ -113,13 +123,24 @@ function shiftedTextMatchDetails(match) {
 
 function detailedSummary(name, referencePath, candidatePath, metrics, options = {}) {
   const maxTextMismatches = options.maxTextMismatches ?? 100;
+  const gaps = options.metadata?.knownReferenceGaps ?? [];
   return {
     ...summarize(name, metrics, options.metadata ?? null),
     referencePath,
     candidatePath,
     missingCues: metrics.missing.map(cueDetails),
-    extraCues: metrics.referenceCues === 0 ? [] : metrics.extra.map(cueDetails),
-    unverifiedCues: metrics.referenceCues === 0 ? metrics.extra.map(cueDetails) : [],
+    extraCues:
+      metrics.referenceCues === 0
+        ? []
+        : metrics.extra
+            .filter((cue) => !isInsideReferenceGap(cue, gaps))
+            .map(cueDetails),
+    unverifiedCues:
+      metrics.referenceCues === 0
+        ? metrics.extra.map(cueDetails)
+        : metrics.extra
+            .filter((cue) => isInsideReferenceGap(cue, gaps))
+            .map(cueDetails),
     shiftedTextMatches: metrics.shiftedTextMatches.map(shiftedTextMatchDetails),
     endMismatches: metrics.endMismatches.map((item) => ({
       reference: cueDetails(item.reference),

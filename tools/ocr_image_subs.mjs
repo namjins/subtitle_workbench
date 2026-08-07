@@ -303,6 +303,24 @@ async function convert(
       );
     }
 
+    // A probing engine reads a spread of this track's own frames with two real
+    // engines and keeps the healthier one — the track's rendering style, not
+    // the flow, decides. See lib/ocr-engine-probe.mjs for the calibration.
+    if (typeof engine.selectEngine === "function") {
+      const selection = await engine.selectEngine(
+        representatives.map((index) => images[index].path),
+        { language, jobs },
+      );
+      engine = selection.engine;
+      if (selection.probed) {
+        process.stderr.write(
+          `Probed ${selection.sampled} frame(s): using ${engine.name} ` +
+            `(text health ${selection.defaultScore.toFixed(2)} vs ${selection.challengerScore.toFixed(2)}, ` +
+            `default confidence ${selection.defaultConfidence.toFixed(1)})\n`,
+        );
+      }
+    }
+
     function storeResult(index, ocrResult) {
       const text = ocrResult.text;
       const timing = packets[index] ?? {

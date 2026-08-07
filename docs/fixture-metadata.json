@@ -1,4 +1,15 @@
 {
+  "Subtitle Examples": {
+    "The Matrix": {
+      "status": "reference-missing-cue",
+      "knownReferenceGaps": [{ "start": 5994.489, "end": 5995.907 }],
+      "notes": [
+        "The stream displays 'I...' at 01:39:54.5 (Smith's 'I... hate... this place'), verified from the decoded bitmap.",
+        "The retail reference SRT starts that speech at '...hate...' (01:39:56.8) and never transcribes the 'I...'.",
+        "A candidate cue in this window is therefore unverified, not extra."
+      ]
+    }
+  },
   "sub:idx examples": {
     "Spy Game (2001)1": {
       "status": "unverified-forced-reference",

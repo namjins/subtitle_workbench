@@ -68,6 +68,14 @@ node tools/subtitle-workbench.mjs benchmark-ocr \
 ```
 
 `docs/fixture-metadata.json` annotates fixtures whose reference is known to be
-wrong, so a bad baseline is not read as an engine failure — currently
-`Spy Game (2001)1`, whose reference SRT is empty although the stream contains
-23 real forced-overlay cues.
+wrong, so a bad baseline is not read as an engine failure. Fixtures nest under
+their examples directory's basename. Two annotation shapes exist:
+
+- A `status`/`notes` entry records provenance — `Spy Game (2001)1`, whose
+  reference SRT is empty although the stream contains 23 real forced-overlay
+  cues.
+- `knownReferenceGaps` lists time windows where the stream provably displays a
+  cue the reference never transcribed, verified against the decoded bitmap
+  (never inferred from OCR output). A candidate cue starting inside one counts
+  as `unverified` instead of `extra` — `The Matrix`, whose reference skips the
+  "I..." of "I... hate... this place" at 01:39:54.5.

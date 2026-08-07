@@ -61,7 +61,12 @@ test("uses automatic OCR as the flow-aware default engine", () => {
     "tesseract-hybrid",
     "external-command",
   ]);
-  assert.equal(createOcrEngine("auto", { mode: "sup-to-srt" }).name, "tesseract-accurate");
+  // Where Vision exists, SUP auto is a probe over both engines: which one is
+  // better depends on the track's rendering style, not the flow.
+  assert.equal(
+    createOcrEngine("auto", { mode: "sup-to-srt" }).name,
+    isMacosVisionAvailable() ? "auto-probe" : "tesseract-accurate",
+  );
   assert.equal(
     createOcrEngine("auto", { mode: "subidx-to-srt" }).name,
     isMacosVisionAvailable() ? "macos-vision" : "tesseract-accurate",

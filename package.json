@@ -17,7 +17,7 @@
     "bridge": "node tools/local_bridge_server.mjs",
     "cli:native": "tools/run_native_macos.sh node tools/subtitle-workbench.mjs",
     "doctor": "node tools/subtitle-workbench.mjs doctor",
-    "ocr:gate": "node tools/subtitle-workbench.mjs benchmark-ocr --examples-dir \"Subtitle Examples\" --candidate-dir .tmp/ocr-examples-accurate --max-missing 0 --max-extra 0 --max-end-mismatches 0 --max-cer 0.01 --min-fixtures 9",
+    "ocr:gate": "node tools/subtitle-workbench.mjs benchmark-ocr --examples-dir \"Subtitle Examples\" --candidate-dir .tmp/ocr-examples-accurate --fixture-metadata docs/fixture-metadata.json --max-missing 0 --max-extra 0 --max-end-mismatches 0 --max-cer 0.01 --min-fixtures 9",
     "test": "node --test tests/*.test.mjs",
     "test:unit": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",

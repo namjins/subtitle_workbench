@@ -62,8 +62,10 @@ Cons:
 - macOS only.
 - Requires `swiftc` for the local helper build in the current implementation.
 - Not suitable as the cross-platform answer.
-- Worse than tuned Tesseract on the tested SUP sample, so `auto` remains
-  Tesseract for SUP.
+- Slightly worse than tuned Tesseract on clean outlined SUP fonts
+  (The Matrix: 1.05% vs 0.64% CER) — but far better on shadowed ones
+  (Stargate: 2.16% vs 15.72%), which is why SUP `auto` on macOS probes each
+  track instead of committing to either engine.
 
 Current SUB/IDX Vision timing-first result:
 
@@ -146,8 +148,10 @@ Cons:
 
 ## Recommended Implementation Order
 
-1. Keep the current flow-specific `auto` policy:
-   - SUP: `tesseract-accurate`
+1. Keep the current `auto` policy:
+   - SUP on macOS with Vision available: per-track probe of both engines
+     (`lib/ocr-engine-probe.mjs`) — the track's rendering style decides
+   - SUP elsewhere: `tesseract-accurate`
    - SUB/IDX on macOS with Vision available: `macos-vision`
    - SUB/IDX elsewhere: `tesseract-accurate`
 2. Preserve benchmark metadata so known-bad references do not hide actual
