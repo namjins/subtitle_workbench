@@ -1,19 +1,27 @@
 # Portable OCR: decision document
 
-Written 2026-08-07. Status: **option C done and shipped; A re-scoped to the
-VobSub gap only.**
+Written 2026-08-07. Status: **preprocessing (option C, extended to VobSub)
+closed most of the gap; option A is demoted to a marginal, one-title
+question.**
 
-## The problem this must solve
+## The problem this was written to solve
 
-Windows and Linux users get materially worse OCR than macOS users where
-Tesseract's failure modes are answered only by Apple Vision, which does not
-exist there. Originally that was two cases; the shadowed-SUP one has since
-been solved portably (see option C below), leaving one:
+Windows and Linux users got materially worse OCR than macOS users where
+Tesseract's failure modes were answered only by Apple Vision. Diagnosing
+each failing title's bitmaps produced three per-image histogram repairs in
+`tesseract-accurate` (`shadow-strip`, `fill-select`, `hollow-fill` — see
+RUNNING_NOTES for each), with these results:
 
-| Case | Tesseract (portable today) | Vision (macOS only) |
-| --- | --- | --- |
-| SUB/IDX, 8-title VobSub set | 91 missing cues, 16.68% CER | 6 missing, 1.83% CER |
-| ~~SUP, shadowed-extrusion font~~ | ~~15.72% CER~~ → **0.07%** via shadow-strip | 2.16% (no longer chosen) |
+| Case | Tesseract before | Tesseract now | Vision (macOS only) |
+| --- | --- | --- | --- |
+| SUB/IDX, 8-title VobSub set | 91 missing, 16.68% CER | **10 missing, 2.47%** | 6 missing, 1.83% |
+| SUP, shadowed-extrusion font | 15.72% CER, dropped cues | **0.07%** | 2.16% (no longer chosen) |
+
+The remaining portable deficit is 0.64 CER points, and Spy Game accounts for
+essentially all of it (10.17%): its glyphs are hollow contours whose stroke
+interiors are reconstructed by `hollow-fill`, and the thin cores genuinely
+carry less information than a solid glyph. That single title is the honest
+test for whether a neural engine still earns its footprint.
 
 ## Success bar (set before starting, per the working agreements)
 
@@ -109,16 +117,16 @@ adding discs.
 
 ## Sequence
 
-1. ~~Bounded spike of option C (shadow-strip).~~ Done — see above. It
-   removed the SUP half of the problem and proved the "understand the damage
-   before adding a runtime" order right.
-2. Diagnose the VobSub failure mode the same way before reaching for ONNX:
-   inspect what portable Tesseract actually sees on the worst VobSub titles
-   (Gosford Park, Spy Game). If it is another structural, preprocessing-
-   fixable pattern, fix it there first.
-3. If preprocessing cannot close the VobSub gap: spike A as recognition-only
-   PP-OCRv6-small behind the engine interface, benchmarked against the same
-   success bar (now VobSub-only).
+1. ~~Bounded spike of option C (shadow-strip).~~ Done — removed the SUP half
+   of the problem.
+2. ~~Diagnose the VobSub failure modes the same way.~~ Done — two more
+   structural repairs (`fill-select`, `hollow-fill`) took the set from
+   16.68% to 2.47%.
+3. Option A is now optional and small: spike recognition-only PP-OCRv6-small
+   behind the engine interface **only if** Spy Game-class hollow fonts
+   matter enough to chase the last 0.64 points — and judge it on that title
+   plus a fresh held-out disc, not on the corpus the repairs were derived
+   from.
 4. Decide packaging (optionalDependencies vs sibling package) only after A
    clears the bar.
 5. Wire the probe off macOS: Tesseract vs ONNX, same two-signal calibration

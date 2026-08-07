@@ -143,14 +143,14 @@ single engine wins everywhere:
 | SUB/IDX (VobSub), macOS | Apple Vision |
 | SUB/IDX (VobSub), elsewhere | Tesseract |
 
-For Blu-ray tracks, preprocessing adapts to the disc's rendering style per
-image (including discs that draw a heavy drop shadow behind each glyph), and
-on macOS the converter additionally reads a couple dozen frames with both
-engines first and keeps whichever handles that disc better — in practice
-Tesseract, with Vision as the safety net for styles it cannot read. Apple
-Vision does not exist on Windows and Linux, so DVD (VobSub) results are
-noticeably worse there. That is a known gap rather than a setting you can
-fix.
+Preprocessing adapts to each disc's rendering style per image — drop
+shadows, low-contrast fills, and hollow outline-drawn glyphs are detected
+and repaired before recognition — so Tesseract results are close to Apple
+Vision's on every tested disc style. On macOS the Blu-ray converter
+additionally reads a couple dozen frames with both engines first and keeps
+whichever handles that disc better, which makes Vision the safety net for
+styles the repairs cannot fix; Windows and Linux have no such net, and rare
+hollow-outline DVD fonts still convert worse there.
 
 Override with `--ocr-engine tesseract-accurate`, `tesseract-hybrid` (faster,
 less accurate) or `macos-vision`.
