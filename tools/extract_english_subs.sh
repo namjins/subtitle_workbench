@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Parallel English image subtitle extraction using mkvinfo + mkvextract.
+# Parallel image subtitle extraction using mkvinfo + mkvextract.
 # DVD VobSub tracks are written as .sub + .idx pairs; Blu-ray/UHD PGS tracks
 # are written as .sup files.
 #
 # Usage:
+#   ./tools/extract_english_subs.sh
 #   JOBS=4 ./tools/extract_english_subs.sh
 #   ./tools/extract_english_subs.sh -j 4
+#   ./tools/extract_english_subs.sh --languages eng,spa
+#   LANGUAGES=eng,spa ./tools/extract_english_subs.sh
 #
 # Requirements: MKVToolNix (mkvinfo, mkvextract)
 
@@ -22,11 +25,59 @@ fmt_secs() {
   printf "%d:%02d:%02d" "$h" "$m" "$s"
 }
 
-JOBS="${JOBS:-2}"
-if [ "${1:-}" = "-j" ] && [ -n "${2:-}" ]; then
-  JOBS="$2"
-  shift 2 || true
+detect_safe_jobs() {
+  local cores=""
+  if command -v getconf >/dev/null 2>&1; then
+    cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  fi
+  if [ -z "$cores" ] && command -v sysctl >/dev/null 2>&1; then
+    cores="$(sysctl -n hw.ncpu 2>/dev/null || true)"
+  fi
+  if [ -z "$cores" ] && command -v nproc >/dev/null 2>&1; then
+    cores="$(nproc 2>/dev/null || true)"
+  fi
+  case "$cores" in (*[!0-9]*|'') cores=4;; esac
+  local jobs=$(( cores - 1 ))
+  [ "$jobs" -lt 1 ] && jobs=1
+  [ "$jobs" -gt 8 ] && jobs=8
+  printf "%s" "$jobs"
+}
+
+JOBS="${JOBS:-auto}"
+if [ "$JOBS" = "auto" ]; then
+  JOBS="$(detect_safe_jobs)"
 fi
+SUBTITLE_LANGUAGES="${LANGUAGES:-${SUBTITLE_LANGUAGES:-eng}}"
+
+while [ "$#" -gt 0 ]; do
+  case "${1:-}" in
+    -j|--jobs)
+      [ -n "${2:-}" ] || break
+      JOBS="$2"
+      if [ "$JOBS" = "auto" ]; then
+        JOBS="$(detect_safe_jobs)"
+      fi
+      shift 2 || true
+      ;;
+    -l|--languages)
+      [ -n "${2:-}" ] || break
+      SUBTITLE_LANGUAGES="$2"
+      shift 2 || true
+      ;;
+    --all-languages)
+      SUBTITLE_LANGUAGES="all"
+      shift || true
+      ;;
+    --worker)
+      break
+      ;;
+    *)
+      shift || true
+      ;;
+  esac
+done
+
+export SUBTITLE_LANGUAGES
 
 process_one_file() {
   file="$1"
@@ -39,14 +90,32 @@ process_one_file() {
 
   tracks="$(
     mkvinfo "$file" | awk '
-      BEGIN { is_sub=0; is_eng=0; id=""; codec="" }
+      function language_wanted(lang, parts, count, i) {
+        if (wanted == "all" || wanted == "*") return 1
+        count = split(wanted, parts, /,/)
+        for (i = 1; i <= count; i++) {
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[i])
+          if (parts[i] == lang) return 1
+        }
+        return 0
+      }
+      BEGIN {
+        wanted=ENVIRON["SUBTITLE_LANGUAGES"]
+        if (wanted == "") wanted="eng"
+        is_sub=0; id=""; codec=""; lang="und"
+      }
       /^\| \+ (A )?Track$/ {
-        if (is_sub && is_eng && id != "") print id "\t" codec;
-        is_sub=0; is_eng=0; id=""; codec="";
+        if (is_sub && language_wanted(lang) && id != "") print id "\t" codec "\t" lang;
+        is_sub=0; id=""; codec=""; lang="und";
         next
       }
       /Track type: subtitles/ { is_sub=1 }
-      /Language: eng/ { is_eng=1 }
+      /Language:/ {
+        s=$0
+        sub(/.*Language: /,"",s)
+        sub(/[^A-Za-z0-9_-].*/,"",s)
+        lang=s
+      }
       /Codec ID:/ {
         s=$0
         sub(/.*Codec ID: /,"",s)
@@ -61,13 +130,13 @@ process_one_file() {
         }
       }
       END {
-        if (is_sub && is_eng && id != "") print id "\t" codec;
+        if (is_sub && language_wanted(lang) && id != "") print id "\t" codec "\t" lang;
       }
     '
   )"
 
   if [ -z "$tracks" ]; then
-    echo "[$(timestamp)] [PID $pid] INFO   No English subtitles found in \"$filename\"."
+    echo "[$(timestamp)] [PID $pid] INFO   No matching subtitle languages ($SUBTITLE_LANGUAGES) found in \"$filename\"."
     echo "[$(timestamp)] [PID $pid] DONE   \"$filename\""
     return 0
   fi
@@ -76,7 +145,7 @@ process_one_file() {
   specs=()
   any_to_extract=0
 
-  while IFS="$(printf '\t')" read -r track_id codec_id; do
+  while IFS="$(printf '\t')" read -r track_id codec_id track_lang; do
     [ -z "$track_id" ] && continue
     ext="sup"
     case "$codec_id" in
@@ -85,19 +154,24 @@ process_one_file() {
       *) ext="sup" ;;
     esac
 
+    stem="$base"
+    if [ "$SUBTITLE_LANGUAGES" != "eng" ] || [ "${track_lang:-eng}" != "eng" ]; then
+      stem="${base}-${track_lang:-und}"
+    fi
+
     if [ "$count" -eq 0 ]; then
-      outname="${base}.${ext}"
+      outname="${stem}.${ext}"
     else
-      outname="${base}${count}.${ext}"
+      outname="${stem}${count}.${ext}"
     fi
 
     if [ -e "$outname" ] || { [ "$ext" = "sub" ] && [ -e "${outname%.sub}.idx" ]; }; then
       echo "[$(timestamp)] [PID $pid] SKIP   \"$outname\" (already exists)"
     else
       if [ "$ext" = "sub" ]; then
-        echo "[$(timestamp)] [PID $pid] QUEUE  track $track_id ($codec_id) -> \"${outname%.sub}.sub\" + \"${outname%.sub}.idx\""
+        echo "[$(timestamp)] [PID $pid] QUEUE  track $track_id $track_lang ($codec_id) -> \"${outname%.sub}.sub\" + \"${outname%.sub}.idx\""
       else
-        echo "[$(timestamp)] [PID $pid] QUEUE  track $track_id ($codec_id) -> \"$outname\""
+        echo "[$(timestamp)] [PID $pid] QUEUE  track $track_id $track_lang ($codec_id) -> \"$outname\""
       fi
       specs+=("${track_id}:${outname}")
       any_to_extract=1
@@ -131,6 +205,7 @@ fi
 
 launch_start=$(date +%s)
 echo "[INFO] Using JOBS=$JOBS (per-file parallelism)."
+echo "[INFO] Extracting subtitle languages: $SUBTITLE_LANGUAGES."
 echo "[INFO] Starting at $(date)."
 
 find . -maxdepth 1 -type f \( -name "*.mkv" -o -name "*.MKV" \) -print0 \

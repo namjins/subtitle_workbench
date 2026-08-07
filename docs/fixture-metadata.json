@@ -1,0 +1,13 @@
+{
+  "sub:idx examples": {
+    "Spy Game (2001)1": {
+      "status": "unverified-forced-reference",
+      "notes": [
+        "Reference SRT is empty except for UTF-8 BOM.",
+        "Source MKV contains a second English VobSub stream with 24 frames.",
+        "Fresh mkvextract output is byte-identical to the checked example .idx/.sub files.",
+        "Vision OCR produces 23 meaningful overlay cues containing CLASSIFIED/CENTRAL."
+      ]
+    }
+  }
+}

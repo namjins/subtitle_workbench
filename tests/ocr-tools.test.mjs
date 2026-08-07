@@ -36,11 +36,23 @@ test("uses automatic OCR as the flow-aware default engine", () => {
     ...(isMacosVisionAvailable() ? ["macos-vision"] : []),
     "tesseract-accurate",
     "tesseract-hybrid",
+    "external-command",
   ]);
   assert.equal(createOcrEngine("auto", { mode: "sup-to-srt" }).name, "tesseract-accurate");
   assert.equal(
     createOcrEngine("auto", { mode: "subidx-to-srt" }).name,
     isMacosVisionAvailable() ? "macos-vision" : "tesseract-accurate",
+  );
+});
+
+test("requires a command for external OCR", () => {
+  assert.throws(
+    () => createOcrEngine("external-command", { ocrCommand: "" }),
+    /requires --ocr-command/u,
+  );
+  assert.equal(
+    createOcrEngine("external-command", { ocrCommand: "ocr-sidecar" }).name,
+    "external-command",
   );
 });
 
@@ -84,4 +96,22 @@ Extra
   assert.equal(result.textMismatches.length, 1);
   assert.equal(result.textMismatches[0].editDistance, 1);
   assert.equal(result.textMismatches[0].reference.number, 1);
+});
+
+test("reports shifted same-text cues as a diagnostic", () => {
+  const reference = parseSrtText(`1
+00:00:01,000 --> 00:00:02,000
+Hello
+`);
+  const candidate = parseSrtText(`1
+00:00:03,000 --> 00:00:04,000
+Hello
+`);
+
+  const result = compareSrt(reference, candidate, { shiftWindowSeconds: 3 });
+  assert.equal(result.missing.length, 1);
+  assert.equal(result.extra.length, 1);
+  assert.equal(result.shiftedTextMatches.length, 1);
+  assert.equal(result.shiftedTextMatches[0].shiftSeconds, 2);
+  assert.equal(result.shiftedTextMatches[0].textSimilarity, 1);
 });

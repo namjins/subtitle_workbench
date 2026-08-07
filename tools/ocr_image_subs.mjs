@@ -3,13 +3,15 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
 const usage = `
 Usage:
-  tools/ocr_image_subs.mjs sup-to-srt movie.sup --lang eng --out movie.srt [--jobs 4]
-  tools/ocr_image_subs.mjs subidx-to-srt movie.idx --lang eng --out movie.srt [--jobs 4]
+  tools/ocr_image_subs.mjs sup-to-srt movie.sup --lang eng --out movie.srt [--jobs auto|4]
+  tools/ocr_image_subs.mjs subidx-to-srt movie.idx --lang eng --out movie.srt [--jobs auto|4]
+  tools/ocr_image_subs.mjs subidx-to-srt movie.idx --ocr-engine external-command --ocr-command ./ocr-sidecar
 
 Requirements:
   ffmpeg, ffprobe, tesseract, magick
@@ -190,11 +192,6 @@ async function extractSubIdxImages(input, workingDirectory, jobs) {
   return prepared.filter(Boolean);
 }
 
-function normalizeJobs(value) {
-  const jobs = Number(value);
-  return Number.isFinite(jobs) ? Math.max(1, Math.floor(jobs)) : 1;
-}
-
 async function convert(
   input,
   output,
@@ -311,7 +308,10 @@ async function main() {
     process.exit(mode ? 0 : 1);
   }
 
-  const engine = createOcrEngine(readOption("--ocr-engine", "auto"), { mode });
+  const engine = createOcrEngine(readOption("--ocr-engine", "auto"), {
+    mode,
+    ocrCommand: readOption("--ocr-command"),
+  });
   checkBinary("ffmpeg");
   checkBinary("ffprobe");
   for (const binary of engine.requiredBinaries) {
@@ -338,7 +338,7 @@ async function main() {
     join(dirname(input), `${basename(input, extname(input))}.srt`);
   const keepTemp = process.argv.includes("--keep-temp");
   const quiet = process.argv.includes("--quiet");
-  const jobs = normalizeJobs(readOption("--jobs", process.env.JOBS ?? "1"));
+  const jobs = normalizeJobs(readOption("--jobs", process.env.JOBS ?? "auto"));
   const limitValue = readOption("--limit");
   const limit = limitValue === null ? null : Math.max(0, Number(limitValue) || 0);
 

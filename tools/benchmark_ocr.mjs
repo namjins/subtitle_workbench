@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { compareSrtFiles } from "../lib/srt-metrics.mjs";
@@ -8,7 +8,7 @@ const usage = `
 Usage:
   tools/benchmark_ocr.mjs --reference reference.srt --candidate candidate.srt [--json] [--details out.json] [--max-text-mismatches 100]
   tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir [--json] [--csv out.csv] [--details out.json] [--max-text-mismatches 100]
-  tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir --timing-first
+  tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir --timing-first [--fixture-metadata docs/fixture-metadata.json]
   tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir --max-missing 0 --max-extra 0 --max-end-mismatches 0 --max-cer 0.01
 
 The directory mode pairs every .sup or .idx in --examples-dir with a reference
@@ -36,16 +36,44 @@ function percent(value) {
   return `${(value * 100).toFixed(2)}%`;
 }
 
-function summarize(name, metrics) {
+async function readFixtureMetadata(path) {
+  if (!path) return {};
+  return JSON.parse(await readFile(resolve(path), "utf8"));
+}
+
+function metadataForFixture(metadata, examplesDir, name) {
+  const normalizedExamplesDir = examplesDir.replace(/\\/g, "/");
+  const candidates = [
+    name,
+    `${basename(normalizedExamplesDir)}/${name}`,
+    normalizedExamplesDir.endsWith("sub:idx examples")
+      ? `sub:idx examples/${name}`
+      : null,
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (metadata[candidate]) return metadata[candidate];
+  }
+  for (const group of Object.values(metadata)) {
+    if (group && typeof group === "object" && group[name]) {
+      return group[name];
+    }
+  }
+  return null;
+}
+
+function summarize(name, metrics, metadata = null) {
   const unverified = metrics.referenceCues === 0 ? metrics.extra.length : 0;
   return {
     name,
+    metadata,
+    note: metadata?.status ?? "",
     referenceCues: metrics.referenceCues,
     candidateCues: metrics.candidateCues,
     missing: metrics.missing.length,
     extra: metrics.extra.length - unverified,
     unverified,
     rawExtra: metrics.extra.length,
+    shifted: metrics.shiftedTextMatches.length,
     endMismatches: metrics.endMismatches.length,
     exactTextMatches: metrics.exactTextMatches,
     characterErrorRate: metrics.characterErrorRate,
@@ -75,15 +103,26 @@ function textMismatchDetails(mismatch) {
   };
 }
 
+function shiftedTextMatchDetails(match) {
+  return {
+    shiftSeconds: match.shiftSeconds,
+    absShiftSeconds: match.absShiftSeconds,
+    textSimilarity: match.textSimilarity,
+    reference: cueDetails(match.reference),
+    candidate: cueDetails(match.candidate),
+  };
+}
+
 function detailedSummary(name, referencePath, candidatePath, metrics, options = {}) {
   const maxTextMismatches = options.maxTextMismatches ?? 100;
   return {
-    ...summarize(name, metrics),
+    ...summarize(name, metrics, options.metadata ?? null),
     referencePath,
     candidatePath,
     missingCues: metrics.missing.map(cueDetails),
     extraCues: metrics.referenceCues === 0 ? [] : metrics.extra.map(cueDetails),
     unverifiedCues: metrics.referenceCues === 0 ? metrics.extra.map(cueDetails) : [],
+    shiftedTextMatches: metrics.shiftedTextMatches.map(shiftedTextMatchDetails),
     endMismatches: metrics.endMismatches.map((item) => ({
       reference: cueDetails(item.reference),
       candidate: cueDetails(item.candidate),
@@ -102,9 +141,11 @@ function printTable(rows) {
     "miss",
     "extra",
     "unverified",
+    "shifted",
     "end",
     "exact",
     "cer",
+    "note",
   ];
   process.stdout.write(`${header.join("\t")}\n`);
   for (const row of rows) {
@@ -116,9 +157,11 @@ function printTable(rows) {
         row.missing,
         row.extra,
         row.unverified,
+        row.shifted,
         row.endMismatches,
         `${row.exactTextMatches}/${row.referenceCues}`,
         percent(row.characterErrorRate),
+        row.note,
       ].join("\t"),
     );
     process.stdout.write("\n");
@@ -133,9 +176,11 @@ function printTimingFirstTable(rows) {
     "miss",
     "extra",
     "unverified",
+    "shifted",
     "end",
     "timing",
     "cer",
+    "note",
   ];
   process.stdout.write(`${header.join("\t")}\n`);
   for (const row of rows) {
@@ -147,6 +192,7 @@ function printTimingFirstTable(rows) {
         row.missing,
         row.extra,
         row.unverified,
+        row.shifted,
         row.endMismatches,
         row.missing === 0 && row.extra === 0 && row.endMismatches === 0
           ? row.unverified > 0
@@ -154,6 +200,7 @@ function printTimingFirstTable(rows) {
             : "ok"
           : "check",
         percent(row.characterErrorRate),
+        row.note,
       ].join("\t"),
     );
     process.stdout.write("\n");
@@ -174,12 +221,14 @@ async function writeCsv(path, rows) {
     "missing",
     "extra",
     "unverified",
+    "shifted",
     "raw_extra",
     "end_mismatches",
     "exact_text_matches",
     "character_error_rate",
     "text_edit_distance",
     "reference_characters",
+    "note",
   ];
   const lines = [
     header.join(","),
@@ -191,12 +240,14 @@ async function writeCsv(path, rows) {
         row.missing,
         row.extra,
         row.unverified,
+        row.shifted,
         row.rawExtra,
         row.endMismatches,
         row.exactTextMatches,
         row.characterErrorRate,
         row.textEditDistance,
         row.referenceCharacters,
+        row.note,
       ]
         .map(csvEscape)
         .join(","),
@@ -210,6 +261,7 @@ async function compareDirectory(
   candidateDir,
   includeDetails = false,
   detailOptions = {},
+  fixtureMetadata = {},
 ) {
   const files = await readdir(examplesDir);
   const sourceFiles = files.filter((file) => /\.(sup|idx)$/iu.test(file)).sort();
@@ -231,10 +283,16 @@ async function compareDirectory(
       continue;
     }
 
+    const metadata = metadataForFixture(fixtureMetadata, examplesDir, base);
     const metrics = await compareSrtFiles(referencePath, candidatePath);
-    rows.push(summarize(base, metrics));
+    rows.push(summarize(base, metrics, metadata));
     if (includeDetails) {
-      details.push(detailedSummary(base, referencePath, candidatePath, metrics, detailOptions));
+      details.push(
+        detailedSummary(base, referencePath, candidatePath, metrics, {
+          ...detailOptions,
+          metadata,
+        }),
+      );
     }
   }
 
@@ -250,6 +308,7 @@ function aggregate(rows) {
       missing: sum.missing + row.missing,
       extra: sum.extra + row.extra,
       unverified: sum.unverified + row.unverified,
+      shifted: sum.shifted + row.shifted,
       rawExtra: sum.rawExtra + row.rawExtra,
       endMismatches: sum.endMismatches + row.endMismatches,
       exactTextMatches: sum.exactTextMatches + row.exactTextMatches,
@@ -263,6 +322,7 @@ function aggregate(rows) {
       missing: 0,
       extra: 0,
       unverified: 0,
+      shifted: 0,
       rawExtra: 0,
       endMismatches: 0,
       exactTextMatches: 0,
@@ -323,6 +383,7 @@ async function main() {
   const candidate = option("--candidate");
   const examplesDir = option("--examples-dir");
   const candidateDir = option("--candidate-dir");
+  const fixtureMetadataPath = option("--fixture-metadata");
   const csv = option("--csv");
   const detailsPath = option("--details");
   const thresholds = {
@@ -338,6 +399,7 @@ async function main() {
         ? maxTextMismatches
         : 100,
   };
+  const fixtureMetadata = await readFixtureMetadata(fixtureMetadataPath);
 
   let rows = [];
   let details = [];
@@ -357,6 +419,7 @@ async function main() {
       resolve(candidateDir),
       Boolean(detailsPath),
       detailOptions,
+      fixtureMetadata,
     );
     rows = result.rows;
     details = result.details;
@@ -386,6 +449,7 @@ async function main() {
           rows,
           total,
           missingCandidates,
+          fixtureMetadata: fixtureMetadataPath ? fixtureMetadata : undefined,
           details: detailsPath ? undefined : details,
           qualityGate: gate.enabled ? gate : undefined,
         },

@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildDoctorReport, formatDoctorReport } from "../lib/dependency-doctor.mjs";
+import { normalizeJobs } from "../lib/cpu-jobs.mjs";
+import { formatJobEvent } from "../lib/local-job-events.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
+import { convertToSrt, outputNameFor, parseFps } from "../lib/subtitle-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extractorScript = join(root, "tools", "extract_english_subs.sh");
@@ -17,22 +20,26 @@ const usage = `
 Subtitle Workbench CLI
 
 Usage:
+  subtitle-workbench ui [--port 8765] [--no-open]
   subtitle-workbench doctor [--json] [--lang eng]
-  subtitle-workbench extract-english <video-dir> [--jobs 4]
+  subtitle-workbench extract-english <video-dir> [--jobs auto|4]
   subtitle-workbench peek-sup <file.sup> [--out-dir dir] [--count 3]
-  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs 4] [--skip-existing] [--quiet]
-  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs 4] [--skip-existing] [--quiet]
+  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command command] [--skip-existing] [--quiet] [--json-events]
+  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command command] [--skip-existing] [--quiet] [--json-events]
+  subtitle-workbench itt-to-srt <files.itt...> [--fps 24000/1001] [--out file.srt] [--out-dir dir] [--skip-existing] [--json-events]
   subtitle-workbench benchmark-ocr --reference reference.srt --candidate candidate.srt
   subtitle-workbench benchmark-ocr --examples-dir dir --candidate-dir dir [--csv out.csv] [--details out.json]
   subtitle-workbench inspect-missing-ocr --details benchmark-details.json --out-dir dir [--examples-dir dir] [--kind missing|text]
 
 Examples:
+  subtitle-workbench ui
   subtitle-workbench doctor
   subtitle-workbench doctor --json
-  subtitle-workbench extract-english "/path/to/videos" --jobs 4
+  subtitle-workbench extract-english "/path/to/videos"
   subtitle-workbench peek-sup movie.sup --out-dir ./preview
   subtitle-workbench sup-to-srt movie.sup --lang eng --out movie.srt
   subtitle-workbench sup-to-srt *.sup --lang eng --out-dir ./srt
+  subtitle-workbench itt-to-srt captions.itt --fps 25 --out captions.srt
   subtitle-workbench benchmark-ocr --examples-dir ./examples --candidate-dir ./ocr-output
   subtitle-workbench inspect-missing-ocr --details ./ocr-output/details.json --examples-dir ./examples --out-dir ./ocr-misses
 `;
@@ -61,6 +68,7 @@ function positionalArgs() {
     "--max-extra",
     "--max-missing",
     "--ocr-engine",
+    "--ocr-command",
     "--out",
     "--out-dir",
     "--reference",
@@ -94,10 +102,16 @@ function run(command, args, options = {}) {
   }
 }
 
+function emitJobEvent(type, fields = {}) {
+  if (process.argv.includes("--json-events")) {
+    process.stdout.write(formatJobEvent(type, fields));
+  }
+}
+
 function extractEnglish() {
   const [videoDir] = positionalArgs();
   if (!videoDir) throw new Error("No video directory provided.");
-  const jobs = option("--jobs", "2");
+  const jobs = String(normalizeJobs(option("--jobs", "auto")));
   run(extractorScript, ["-j", jobs], {
     cwd: resolve(videoDir),
     env: { ...process.env, JOBS: jobs },
@@ -122,20 +136,86 @@ async function imageOcr(mode) {
     const args = [mode, inputPath, "--lang", option("--lang", "eng")];
     const outputPath = outDir
       ? join(resolve(outDir), `${basename(inputPath, extname(inputPath))}.srt`)
-      : out;
+      : out
+        ? resolve(out)
+        : join(dirname(inputPath), `${basename(inputPath, extname(inputPath))}.srt`);
     if (outputPath && process.argv.includes("--skip-existing") && existsSync(resolve(outputPath))) {
       process.stderr.write(`Skipping existing ${resolve(outputPath)}\n`);
       continue;
     }
-    if (outputPath) args.push("--out", resolve(outputPath));
+    args.push("--out", resolve(outputPath));
     if (process.argv.includes("--keep-temp")) args.push("--keep-temp");
     if (process.argv.includes("--quiet")) args.push("--quiet");
     if (option("--limit")) args.push("--limit", option("--limit"));
-    args.push("--jobs", option("--jobs", "1"));
+    const jobs = normalizeJobs(option("--jobs", "auto"));
+    args.push("--jobs", String(jobs));
     args.push("--ocr-engine", option("--ocr-engine", "auto"));
+    if (option("--ocr-command")) args.push("--ocr-command", option("--ocr-command"));
+    emitJobEvent("job-started", {
+      mode,
+      input: inputPath,
+      output: outputPath ? resolve(outputPath) : null,
+      language: option("--lang", "eng"),
+      engine: option("--ocr-engine", "auto"),
+      jobs,
+    });
     process.stderr.write(`Starting ${basename(inputPath)}\n`);
     run(ocrScript, args);
     const durationSeconds = (performance.now() - started) / 1000;
+    emitJobEvent("job-finished", {
+      mode,
+      input: inputPath,
+      output: outputPath ? resolve(outputPath) : null,
+      durationSeconds,
+    });
+    process.stderr.write(
+      `Finished ${basename(inputPath)} in ${formatDuration(durationSeconds)}\n`,
+    );
+  }
+}
+
+async function textToSrt(mode) {
+  const inputs = positionalArgs();
+  if (!inputs.length) throw new Error("No input file provided.");
+  const out = option("--out");
+  const outDir = option("--out-dir");
+  const fpsRaw = option("--fps", "24000/1001");
+  const fps = parseFps(fpsRaw);
+  if (out && inputs.length > 1) {
+    throw new Error("--out can only be used with a single input file.");
+  }
+  if (outDir) {
+    await mkdir(outDir, { recursive: true });
+  }
+
+  for (const input of inputs) {
+    const started = performance.now();
+    const inputPath = resolve(input);
+    const outputPath = outDir
+      ? join(resolve(outDir), outputNameFor(basename(inputPath)))
+      : out
+        ? resolve(out)
+        : join(dirname(inputPath), outputNameFor(basename(inputPath)));
+    if (process.argv.includes("--skip-existing") && existsSync(outputPath)) {
+      process.stderr.write(`Skipping existing ${outputPath}\n`);
+      continue;
+    }
+    emitJobEvent("job-started", {
+      mode,
+      input: inputPath,
+      output: outputPath,
+      fps: fpsRaw,
+    });
+    const source = await readFile(inputPath, "utf8");
+    const srt = convertToSrt(source, inputPath, { fps });
+    await writeFile(outputPath, srt, "utf8");
+    const durationSeconds = (performance.now() - started) / 1000;
+    emitJobEvent("job-finished", {
+      mode,
+      input: inputPath,
+      output: outputPath,
+      durationSeconds,
+    });
     process.stderr.write(
       `Finished ${basename(inputPath)} in ${formatDuration(durationSeconds)}\n`,
     );
@@ -171,6 +251,36 @@ function doctor() {
   }
 }
 
+async function startUi() {
+  const { createLocalBridgeServer } = await import("../lib/local-bridge-server.mjs");
+  const distDir = join(root, "dist");
+  if (!existsSync(join(distDir, "index.html"))) {
+    throw new Error(
+      "No built UI found in dist/. Run `npm run build` first, or use `npm run app`.",
+    );
+  }
+
+  const port = Number(option("--port", process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT ?? "8765"));
+  const host = process.env.SUBTITLE_WORKBENCH_BRIDGE_HOST ?? "127.0.0.1";
+  const server = createLocalBridgeServer();
+
+  await new Promise((resolvePromise) => server.listen(port, host, resolvePromise));
+  const url = `http://${host}:${port}/`;
+  process.stderr.write(`Subtitle Workbench is running at ${url}\n`);
+
+  if (!process.argv.includes("--no-open")) {
+    const opener =
+      process.platform === "darwin"
+        ? ["open", [url]]
+        : process.platform === "win32"
+          ? ["cmd", ["/c", "start", "", url]]
+          : ["xdg-open", [url]];
+    spawnSync(opener[0], opener[1], { stdio: "ignore" });
+  }
+
+  process.on("SIGINT", () => server.close(() => process.exit(0)));
+}
+
 async function peekSup() {
   const [input] = positionalArgs();
   if (!input) throw new Error("No SUP file provided.");
@@ -194,6 +304,8 @@ async function main() {
 
   if (command === "doctor") {
     doctor();
+  } else if (command === "ui") {
+    await startUi();
   } else if (command === "extract-english") {
     extractEnglish();
   } else if (command === "peek-sup") {
@@ -202,6 +314,8 @@ async function main() {
     await imageOcr("sup-to-srt");
   } else if (command === "subidx-to-srt") {
     await imageOcr("subidx-to-srt");
+  } else if (command === "itt-to-srt") {
+    await textToSrt("itt-to-srt");
   } else if (command === "benchmark-ocr") {
     benchmarkOcr();
   } else if (command === "inspect-missing-ocr") {

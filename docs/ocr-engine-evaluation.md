@@ -24,7 +24,7 @@ that can run unattended.
 
 ### Tesseract
 
-Keep as the default baseline for now.
+Keep as the portable baseline and SUP default for now.
 
 Pros:
 
@@ -32,17 +32,50 @@ Pros:
 - Works offline and supports many languages.
 - Already integrated in the CLI.
 - Good enough on the the reference discs PGS sample after targeted preprocessing:
-  668 generated cues matched 668 SubtitleWorkbench reference cue timestamps.
+  668 generated cues matched 668 provided reference cue timestamps.
+- Current full SUP gate passes with 26,415 / 26,415 cues, 0 missing, 0 extra,
+  0 end mismatches, and 0.68% total CER.
 
 Cons:
 
 - Accuracy still trails the reference text in some places.
 - Small or stylized cues need fallback preprocessing.
 - Confidence scores are useful but not complete enough on their own.
+- Portable SUB/IDX quality is not yet good enough on the hard VobSub set:
+  91 missing cues and 16.68% CER in the current timing-first benchmark, driven
+  mainly by Gosford Park and Spy Game.
+
+### macOS Vision
+
+Use as the macOS SUB/IDX default when available.
+
+Pros:
+
+- Built into macOS, so it does not add a third-party runtime for Mac users.
+- Much better than Tesseract on hard outlined VobSub subtitles.
+- After batch-mode OCR and parallel VobSub preprocessing, the full 8-title
+  SUB/IDX sample completes in about 4m 41s on the current M2 Ultra system.
+
+Cons:
+
+- macOS only.
+- Requires `swiftc` for the local helper build in the current implementation.
+- Not suitable as the cross-platform answer.
+- Worse than tuned Tesseract on the tested SUP sample, so `auto` remains
+  Tesseract for SUP.
+
+Current SUB/IDX Vision timing-first result:
+
+- 25 missing cues
+- 3 true extra cues
+- 23 unverified forced/overlay cues from an empty reference file
+- 15 shifted-text diagnostics
+- 0 end mismatches
+- 2.05% CER
 
 ### RapidOCR / PaddleOCR via ONNX Runtime
 
-Best next neural OCR experiment.
+Best next portable neural OCR experiment for Windows/Linux parity.
 
 Pros:
 
@@ -57,6 +90,28 @@ Cons:
 - Language model selection and storage need design before shipping.
 - Node integration may require a native package or a sidecar process.
 - Needs benchmarking before becoming a default engine.
+- This is the likely route to close the SUB/IDX gap on Windows and Linux,
+  where Apple Vision is unavailable.
+
+Integration path:
+
+- Implement a small sidecar command first, not an in-process dependency.
+- Call it through:
+
+```bash
+node tools/subtitle-workbench.mjs subidx-to-srt movie.idx \
+  --ocr-engine external-command \
+  --ocr-command /path/to/ocr-sidecar \
+  --jobs 8
+```
+
+- Sidecar contract:
+  - argv 1: PNG image path
+  - argv 2: OCR language, e.g. `eng`
+  - stdout: plain text or JSON like
+    `{"text":"Hello","confidence":0.98,"model":"rapidocr-onnx"}`
+- Once a sidecar proves useful, decide whether to keep it as a sidecar binary
+  or replace it with an in-process ONNX Runtime adapter.
 
 ### Full PaddleOCR Python Runtime
 
@@ -90,21 +145,19 @@ Cons:
 
 ## Recommended Implementation Order
 
-1. Add a small OCR engine abstraction:
-   - `recognize(imagePath, language, options) -> OcrResult`
-   - Include text, confidence, engine name, mode/model, variant, duration, and
-     warnings.
-2. Move the current Tesseract hybrid into that abstraction without changing
-   default behavior.
-3. Add a benchmark command that compares generated SRT output against a
-   reference SRT by timestamp, cue count, exact text matches, and edit distance.
-4. Add debug-output support that keeps representative preprocessed images and
+1. Keep the current flow-specific `auto` policy:
+   - SUP: `tesseract-accurate`
+   - SUB/IDX on macOS with Vision available: `macos-vision`
+   - SUB/IDX elsewhere: `tesseract-accurate`
+2. Preserve benchmark metadata so known-bad references do not hide actual
+   engine quality.
+3. Add debug-output support that keeps representative preprocessed images and
    raw OCR outputs when requested.
-5. Add bitmap/result caching keyed by normalized image hash so repeated subtitle
+4. Add bitmap/result caching keyed by normalized image hash so repeated subtitle
    images do not get OCR'd repeatedly.
-6. Experiment with RapidOCR or PaddleOCR recognition models through ONNX Runtime
-   behind the same abstraction.
-7. Add line segmentation and glyph/template matching after benchmarks show where
+5. Experiment with RapidOCR or PaddleOCR recognition models through ONNX Runtime
+   through the `external-command` sidecar adapter.
+6. Add line segmentation and glyph/template matching after benchmarks show where
    neural OCR still loses.
 
 ## What Not To Do Yet
@@ -132,4 +185,3 @@ Current Tesseract hybrid result:
 - End-time mismatches: 0
 - Exact text matches: 462 / 668
 - Text edit distance: 734 / 18,374 reference characters
-

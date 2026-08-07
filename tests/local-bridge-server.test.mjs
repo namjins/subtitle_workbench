@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { detectSafeJobs } from "../lib/cpu-jobs.mjs";
+import {
+  safeUploadName,
+  validateJob,
+  validatePickRequest,
+  writeSse,
+} from "../lib/local-bridge-server.mjs";
+
+test("validates local bridge job requests", () => {
+  assert.deepEqual(
+    validateJob({
+      command: "sup-to-srt",
+      inputs: ["/tmp/movie.sup"],
+      language: "eng",
+      jobs: "4",
+    }),
+    {
+      command: "sup-to-srt",
+      inputs: ["/tmp/movie.sup"],
+      language: "eng",
+      outDir: undefined,
+      fps: undefined,
+      jobs: 4,
+      ocrEngine: "auto",
+      ocrCommand: undefined,
+    },
+  );
+  assert.throws(() => validateJob({ command: "rm", inputs: ["x"] }), /Unsupported/u);
+  assert.throws(() => validateJob({ command: "sup-to-srt", inputs: [] }), /At least one/u);
+});
+
+test("validates ITT bridge jobs with FPS", () => {
+  assert.deepEqual(
+    validateJob({
+      command: "itt-to-srt",
+      inputs: ["/tmp/captions.itt"],
+      fps: "24000/1001",
+    }),
+    {
+      command: "itt-to-srt",
+      inputs: ["/tmp/captions.itt"],
+      language: "eng",
+      fps: "24000/1001",
+      outDir: undefined,
+      jobs: detectSafeJobs(),
+      ocrEngine: "auto",
+      ocrCommand: undefined,
+    },
+  );
+});
+
+test("defaults bridge jobs to the safe automatic count", () => {
+  assert.equal(
+    validateJob({ command: "sup-to-srt", inputs: ["/tmp/movie.sup"] }).jobs,
+    detectSafeJobs(),
+  );
+});
+
+test("formats bridge events as Server-Sent Events", () => {
+  let body = "";
+  writeSse(
+    {
+      write: (chunk) => {
+        body += chunk;
+      },
+    },
+    "job-finished",
+    { output: "/tmp/movie.srt" },
+  );
+
+  assert.match(body, /^event: job-finished\n/u);
+  assert.equal(body.includes('data: {"output":"/tmp/movie.srt"}\n\n'), true);
+});
+
+test("sanitizes uploaded file names before writing bridge temp files", () => {
+  assert.equal(safeUploadName("../Movie:Track?.sup"), "Movie_Track_.sup");
+  assert.equal(safeUploadName("  Spy Game (2001).idx  "), "Spy Game (2001).idx");
+  assert.equal(safeUploadName(""), "subtitle-file");
+});
+
+test("validates native file picker requests", () => {
+  assert.deepEqual(validatePickRequest({ extensions: [".mkv", "SUP", "../bad"] }), {
+    extensions: ["mkv", "sup"],
+  });
+  assert.deepEqual(validatePickRequest({}), { extensions: [] });
+});
+
+test("returns CORS headers for local browser clients", async () => {
+  const { createLocalBridgeServer } = await import("../lib/local-bridge-server.mjs");
+  const server = createLocalBridgeServer();
+  let headers = {};
+  server.emit("request", {
+    method: "OPTIONS",
+    url: "/jobs",
+    headers: { origin: "http://localhost:3001" },
+  }, {
+    writeHead: (_status, values) => {
+      headers = values;
+    },
+    end() {},
+  });
+
+  assert.equal(headers["access-control-allow-origin"], "http://localhost:3001");
+});

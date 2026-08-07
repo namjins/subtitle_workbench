@@ -79,18 +79,22 @@ Run the unified CLI from the repo:
 npm run cli -- --help
 npm run cli -- doctor
 npm run cli -- doctor --json
-npm run cli -- extract-english "/path/to/videos" --jobs 4
+npm run cli -- extract-english "/path/to/videos"
 npm run cli -- peek-sup movie.sup --out-dir ./preview --count 3
 npm run cli -- sup-to-srt movie.sup --lang eng --out movie.srt
-npm run cli -- sup-to-srt *.sup --lang eng --out-dir ./srt --jobs 8
+npm run cli -- sup-to-srt *.sup --lang eng --out-dir ./srt
 npm run cli -- subidx-to-srt movie.idx --lang eng --out movie.srt
-npm run cli -- subidx-to-srt *.idx --lang eng --out-dir ./srt --jobs 8
+npm run cli -- subidx-to-srt *.idx --lang eng --out-dir ./srt
 npm run cli -- benchmark-ocr --reference reference.srt --candidate generated.srt
 npm run cli -- benchmark-ocr --examples-dir ./examples --candidate-dir ./ocr-output
 npm run cli -- inspect-missing-ocr --details ./ocr-output/details.json --examples-dir ./examples --out-dir ./ocr-misses
 ```
 
 The package also exposes a `subtitle-workbench` binary for future packaging.
+
+CPU parallelism defaults to `--jobs auto`: the CLI detects available CPU
+parallelism, keeps one core free, and caps automatic jobs at 8. Pass `--jobs N`
+to override when you want a different concurrency level.
 
 `peek-sup` extracts a few readable subtitle images from a PGS `.sup` file so the
 operator can confirm the OCR language before running the full conversion.
@@ -103,14 +107,14 @@ The extraction script is based on the existing workflow in
 From a folder containing `.mkv` files:
 
 ```bash
-JOBS=4 /path/to/repos/subtitle_workbench/tools/extract_english_subs.sh
+/path/to/repos/subtitle_workbench/tools/extract_english_subs.sh
 ```
 
 Or from the project root:
 
 ```bash
 cd /path/to/videos
-JOBS=4 /path/to/repos/subtitle_workbench/tools/extract_english_subs.sh
+JOBS=auto /path/to/repos/subtitle_workbench/tools/extract_english_subs.sh
 ```
 
 The script:
@@ -119,7 +123,8 @@ The script:
 - extracts English subtitle tracks;
 - writes `movie.sup`, `movie1.sup`, `movie2.sup`, and so on;
 - skips outputs that already exist;
-- runs files in parallel with `JOBS=N`.
+- runs files in parallel with `JOBS=auto` by default, or `JOBS=N` when
+  overridden.
 
 ## Convert Image Subtitles With OCR
 
@@ -138,7 +143,7 @@ Useful options:
 
 - `--out /path/to/output.srt`
 - `--keep-temp`
-- `--jobs 8`
+- `--jobs auto` (default safe CPU count) or `--jobs N`
 - `--ocr-engine auto` (default; uses Tesseract for SUP, and uses macOS Vision
   for SUB/IDX when available on macOS; otherwise uses the portable Tesseract
   accurate path)
@@ -146,6 +151,30 @@ Useful options:
 - `--ocr-engine tesseract-accurate` (portable Tesseract high-accuracy path)
 - `--ocr-engine macos-vision` (optional macOS-only benchmark adapter; hidden
   on Windows/Linux and never used unless selected)
+- `--ocr-engine external-command --ocr-command /path/to/ocr-sidecar`
+  (experimental cross-platform adapter for benchmarking RapidOCR/PaddleOCR/ONNX
+  sidecars)
+
+The external OCR command is called as:
+
+```bash
+/path/to/ocr-sidecar /path/to/image.png eng
+```
+
+It may print plain recognized text or JSON:
+
+```json
+{"text":"Hello","confidence":0.98,"model":"rapidocr-onnx"}
+```
+
+For a minimal contract smoke test, see:
+
+```bash
+node tools/subtitle-workbench.mjs subidx-to-srt "sub:idx examples/Spy Game (2001)1.idx" \
+  --ocr-engine external-command \
+  --ocr-command tools/ocr_external_echo_example.mjs \
+  --out .tmp/external-command-smoke/spy-game-forced-echo.srt
+```
 
 VobSub `.sub/.idx` files are paired by the `.idx` path. The helper renders
 subtitle event frames, filters clear frames, normalizes dark and light subtitle
@@ -163,6 +192,7 @@ npm run cli -- benchmark-ocr --examples-dir "/path/to/samples/Subtitle Examples"
 npm run cli -- benchmark-ocr --examples-dir "/path/to/samples/Subtitle Examples" --candidate-dir .tmp/ocr-round --max-missing 0 --max-extra 0 --max-end-mismatches 0 --max-cer 0.01
 npm run cli -- benchmark-ocr --examples-dir "sub:idx examples" --candidate-dir .tmp/subidx-round --max-missing 0 --max-extra 0 --max-end-mismatches 0 --max-cer 0.01
 npm run cli -- benchmark-ocr --examples-dir "sub:idx examples" --candidate-dir .tmp/subidx-round --timing-first
+npm run cli -- benchmark-ocr --examples-dir "sub:idx examples" --candidate-dir .tmp/subidx-round --timing-first --fixture-metadata docs/fixture-metadata.json
 npm run cli -- inspect-missing-ocr --details .tmp/ocr-round/details.json --examples-dir "/path/to/samples/Subtitle Examples" --out-dir .tmp/ocr-round/missing-images
 npm run cli -- inspect-missing-ocr --details .tmp/ocr-round/details.json --examples-dir "/path/to/samples/Subtitle Examples" --out-dir .tmp/ocr-round/text-mismatch-images --kind text --limit 100
 ```
@@ -177,6 +207,9 @@ end-time mismatches before text accuracy. If a reference SRT is empty but the
 candidate has cues, those cues are reported as `unverified` instead of normal
 extras; this keeps forced/overlay subtitle streams visible without treating an
 empty baseline as proof of failure.
+The `shifted` column is diagnostic: it counts missing reference cues whose text
+appears nearby in the candidate at a different timestamp, which usually points
+to timing extraction rather than OCR text loss.
 
 Use the threshold flags as the reliability gate for OCR changes. The current
 fixture target is:
@@ -194,6 +227,17 @@ npm run ocr:gate
 
 ## Next Backend Step
 
-The browser workbench now generates local commands for the OCR helper. The next
-implementation pass should add local server routes that run those commands from
-the UI and return downloadable `.srt` files directly.
+The browser workbench now models the local workflows, and the CLI can emit JSONL
+job events with `--json-events`. `lib/local-runner.mjs` can spawn the CLI and
+parse those events. The next implementation pass should add the app-specific
+local route or desktop command that calls the runner and streams real progress
+and output paths into the UI.
+
+For local development, the bridge server can be started separately:
+
+```bash
+npm run bridge
+```
+
+It listens on `127.0.0.1:8765` by default and exposes `POST /uploads` for
+browser-selected files plus `POST /jobs` as a Server-Sent Events stream.
