@@ -39,3 +39,6 @@ yarn-error.log*
 # tests/fixtures instead; the full set only drives the local `ocr:gate` run.
 /Subtitle Examples/
 /sub:idx examples/
+
+# Local working notes, not for publication
+/RUNNING_NOTES.md

@@ -32,7 +32,7 @@ Pros:
 - Easy to install and bundle as a sidecar binary.
 - Works offline and supports many languages.
 - Already integrated in the CLI.
-- Good enough on the the reference discs PGS sample after targeted preprocessing:
+- Good enough on the reference PGS sample after targeted preprocessing:
   668 generated cues matched 668 provided reference cue timestamps.
 - Current full SUP gate passes with 26,415 / 26,415 cues, 0 missing, 0 extra,
   0 end mismatches, and 0.68% total CER.
@@ -174,8 +174,8 @@ Cons:
 
 Using:
 
-- Source: `/path/to/samples/the reference discs- Season 1 Disc 1_t00.sup`
-- Reference: `/path/to/the reference discs- Season 1 Disc 1_t00-eng.srt`
+- Source: `/path/to/samples/sample-track.sup`
+- Reference: `/path/to/sample-track-eng.srt`
 
 Current Tesseract hybrid result:
 

@@ -1,7 +1,7 @@
 {
   "name": "subtitle-workbench",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "engines": {
     "node": ">=22.13.0"
   },
@@ -43,5 +43,11 @@
     "typescript-eslint": "^8.66.0",
     "vite": "8.0.13"
   },
-  "type": "module"
+  "type": "module",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "description": "Convert Blu-ray PGS, DVD VobSub and Final Cut Pro subtitles to SRT, locally.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/namjins/subtitle_workbench.git"
+  }
 }

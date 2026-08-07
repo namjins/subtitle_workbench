@@ -287,7 +287,7 @@ async function convert(
     // a held caption re-sent as its own display set. OCR is by far the most
     // expensive step, and identical bytes cannot produce a different reading,
     // so recognise one representative per distinct image and fan the result
-    // out. Measured at 8.6% of images on a full the reference discs track.
+    // out. Measured at 8.6% of images on a full reference track.
     const hashes = await Promise.all(images.map((image) => hashFile(image.path)));
     const firstByHash = new Map();
     const representatives = [];
