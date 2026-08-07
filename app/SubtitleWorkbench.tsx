@@ -1,8 +1,9 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
   extractBridgeVideo,
+  fetchBridgeDoctorReport,
   inspectBridgeVideo,
   pickBridgeFile,
   runBridgeJob,
@@ -233,6 +234,35 @@ async function filesFromDrop(dataTransfer: DataTransfer) {
 
 export function SubtitleWorkbench() {
   const [active, setActive] = useState<ToolId>("extract");
+  // Populated only when the startup dependency check finds required tools
+  // missing; when everything is installed the user sees nothing at all. A
+  // failed check (bridge unreachable, old bridge without /doctor) also shows
+  // nothing — conversions surface their own errors.
+  const [missingDependencies, setMissingDependencies] = useState<{
+    names: string[];
+    install: string[];
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchBridgeDoctorReport()
+      .then((report) => {
+        if (cancelled || report.summary.ready) return;
+        setMissingDependencies({
+          names: [
+            ...report.summary.binaryFailures.map((failure) => failure.name),
+            ...report.summary.languageFailures.map(
+              (failure) => `tesseract language "${failure.language}"`,
+            ),
+          ],
+          install: report.install,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [extractStage, setExtractStage] = useState<ExtractStage>("intake");
   const [extractVideoFile, setExtractVideoFile] = useState<File | null>(null);
   const [extractVideoName, setExtractVideoName] = useState("");
@@ -912,6 +942,15 @@ export function SubtitleWorkbench() {
           <h1>Subtitle workbench</h1>
         </div>
       </section>
+
+      {missingDependencies ? (
+        <section className="dependency-warning" role="alert">
+          <strong>Some required tools are missing:</strong>{" "}
+          {missingDependencies.names.join(", ")}. Conversions that need them
+          will fail until they are installed.
+          <pre>{missingDependencies.install.join("\n")}</pre>
+        </section>
+      ) : null}
 
       <section className="tool-grid" aria-label="Subtitle tools">
         {tools.map((tool) => (

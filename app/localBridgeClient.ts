@@ -65,6 +65,25 @@ function bridgeHeaders(extra: Record<string, string> = {}) {
   return token ? { ...extra, "x-subtitle-workbench-token": token } : extra;
 }
 
+export type BridgeDoctorReport = {
+  summary: {
+    ready: boolean;
+    binaryFailures: Array<{ name: string }>;
+    languageFailures: Array<{ language: string }>;
+  };
+  install: string[];
+};
+
+export async function fetchBridgeDoctorReport(): Promise<BridgeDoctorReport> {
+  const response = await fetch(`${bridgeOrigin}/doctor`, {
+    headers: bridgeHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Dependency check failed with status ${response.status}.`);
+  }
+  return response.json();
+}
+
 export async function runBridgeJob(
   job: BridgeJob,
   onEvent: (event: BridgeEvent) => void,

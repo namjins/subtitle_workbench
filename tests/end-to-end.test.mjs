@@ -25,9 +25,13 @@ function runCli(args, options = {}) {
     // cacheDir redirects the whole cache root — used by the cache test for a
     // private conversion cache. Left unset elsewhere so the prebuilt Vision
     // helper is reused rather than rebuilt per run.
-    env: options.cacheDir
-      ? { ...process.env, SUBTITLE_WORKBENCH_CACHE_DIR: options.cacheDir }
-      : process.env,
+    env: {
+      ...process.env,
+      ...(options.cacheDir
+        ? { SUBTITLE_WORKBENCH_CACHE_DIR: options.cacheDir }
+        : {}),
+      ...(options.env ?? {}),
+    },
   });
 }
 
@@ -309,5 +313,48 @@ test("serves a repeat conversion from the cache, keyed by content and stamped wi
     assert.doesNotMatch(forced.stderr, /reused cached conversion/u);
     const replaced = JSON.parse(await readFile(join(conversions, entryFile), "utf8"));
     assert.notEqual(replaced.appVersion, "0.0.1");
+  });
+});
+
+test("names every missing tool with install help before starting work", async () => {
+  await withTempDir(async (dir) => {
+    const input = join(dir, "movie.sup");
+    await writeFile(input, await readFile(realSup));
+
+    // A PATH with no tools on it: preflight must name them all at once and
+    // point at the platform's install commands, not fail one binary at a time.
+    const result = runCli(
+      ["sup-to-srt", "--out", join(dir, "out.srt"), "--quiet", "--", input],
+      { cacheDir: join(dir, "cache"), env: { PATH: dir } },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Missing required tools: .*ffmpeg/u);
+    assert.match(result.stderr, /Missing required tools: .*magick/u);
+    assert.match(result.stderr, /subtitle-workbench doctor/u);
+  });
+});
+
+test("serves a cached conversion even when the tools are gone", { skip: !canOcr && "OCR tools unavailable" }, async () => {
+  await withTempDir(async (dir) => {
+    const cacheDir = join(dir, "cache");
+    const input = join(dir, "movie.sup");
+    await writeFile(input, await readFile(realSup));
+    const args = (output) => [
+      "sup-to-srt", "--lang", "eng", "--ocr-engine", "tesseract-accurate",
+      "--out", output, "--quiet", "--", input,
+    ];
+
+    const seeded = runCli(args(join(dir, "a.srt")), { cacheDir });
+    assert.equal(seeded.status, 0, seeded.stderr);
+
+    // Uninstalling ffmpeg/tesseract must not take away conversions that are
+    // already finished: preflight runs only after the cache misses.
+    const withoutTools = runCli(args(join(dir, "b.srt")), {
+      cacheDir,
+      env: { PATH: dir },
+    });
+    assert.equal(withoutTools.status, 0, withoutTools.stderr);
+    assert.match(withoutTools.stderr, /reused cached conversion/u);
   });
 });

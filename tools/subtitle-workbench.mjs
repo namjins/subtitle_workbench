@@ -124,6 +124,20 @@ async function extractEnglish() {
   const [videoDir] = positionalArgs();
   if (!videoDir) throw new Error("No video directory provided.");
 
+  // Fail before scanning, with install help, rather than per file once the
+  // batch is running. Silent when everything is present.
+  const report = buildDoctorReport({ feature: "extract" });
+  if (!report.summary.ready) {
+    const missing = report.summary.binaryFailures.map((item) => item.name);
+    throw new Error(
+      [
+        `Missing required tools: ${missing.join(", ")}.`,
+        "Install them and run `subtitle-workbench doctor` to verify:",
+        ...report.install.map((line) => `  ${line}`),
+      ].join("\n"),
+    );
+  }
+
   const languages = parseLanguageList(
     hasFlag("--all-languages") ? "all" : option("--languages", "eng"),
   );

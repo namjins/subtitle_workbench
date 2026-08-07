@@ -12,6 +12,7 @@ import {
   readCachedConversion,
   writeCachedConversion,
 } from "../lib/conversion-cache.mjs";
+import { installInstructionsForPlatform } from "../lib/dependency-doctor.mjs";
 import { cacheDirectory, hasCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
@@ -93,10 +94,19 @@ function runCapturingStderr(command, args) {
   return result.stderr ?? "";
 }
 
-function checkBinary(command) {
-  if (!hasCommand(command)) {
-    throw new Error(`Missing required binary: ${command}`);
-  }
+// Named for what it tells the user: every missing tool at once, with the
+// install commands for this platform, instead of one bare binary name per
+// failed attempt.
+function checkBinaries(commands) {
+  const missing = [...new Set(commands)].filter((command) => !hasCommand(command));
+  if (!missing.length) return;
+  throw new Error(
+    [
+      `Missing required tools: ${missing.join(", ")}.`,
+      "Install them and run `subtitle-workbench doctor` to verify:",
+      ...installInstructionsForPlatform().map((line) => `  ${line}`),
+    ].join("\n"),
+  );
 }
 
 function secondsToSrtTime(seconds) {
@@ -430,14 +440,6 @@ async function main() {
     ocrCommand: readOption("--ocr-command"),
     textCleanup: readOption("--text-cleanup", "generic"),
   });
-  // The pipeline always needs ImageMagick, whichever engine is selected.
-  // Checking only engine.requiredBinaries let a Vision run (which declares
-  // just swiftc) pass preflight and then die minutes later on the first image.
-  checkBinary("ffmpeg");
-  checkBinary("magick");
-  for (const binary of engine.requiredBinaries) {
-    checkBinary(binary);
-  }
 
   const input = resolve(inputArg);
   if (!existsSync(input)) {
@@ -509,6 +511,13 @@ async function main() {
       return;
     }
   }
+
+  // Preflight comes after the cache lookup on purpose: serving an already
+  // finished conversion needs none of the tools. The pipeline always needs
+  // ffmpeg and ImageMagick, whichever engine is selected — checking only
+  // engine.requiredBinaries once let a Vision run (which declares just
+  // swiftc) pass preflight and then die minutes later on the first image.
+  checkBinaries(["ffmpeg", "magick", ...engine.requiredBinaries]);
 
   await convert(
     input,

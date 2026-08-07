@@ -137,3 +137,25 @@ test("rejects extract requests with an injected track id or codec", async () => 
     assert.equal(badCodec.status, 400);
   });
 });
+
+test("serves the dependency report to authorized callers only", async () => {
+  await withServer(async (origin, token) => {
+    // No token: the report fingerprints the machine (installed tools,
+    // platform), so it is gated like everything else.
+    const denied = await fetch(`${origin}/doctor`, {
+      headers: { Host: new URL(origin).host },
+    });
+    assert.notEqual(denied.status, 200);
+
+    const allowed = await fetch(`${origin}/doctor`, {
+      headers: {
+        Host: new URL(origin).host,
+        "x-subtitle-workbench-token": token,
+      },
+    });
+    assert.equal(allowed.status, 200);
+    const report = await allowed.json();
+    assert.equal(typeof report.summary.ready, "boolean");
+    assert.ok(Array.isArray(report.install));
+  });
+});
