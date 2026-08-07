@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 // SRT Cleaner and a generic "Convert to SRT" are deliberately deferred past the
-// first release (see RUNNING_NOTES "Product Goal"). These guards used to live in
+// first release (see docs/product-roadmap.md). These guards used to live in
 // the server-rendered HTML test, which went away with the Cloudflare worker.
 // They assert over the workbench source instead: there is no server-rendered
 // HTML left to inspect, and a source grep is enough to catch a tool card or

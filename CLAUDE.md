@@ -4,8 +4,9 @@ Local-first subtitle workbench: React UI + `subtitle-workbench` CLI + a localhos
 bridge. Converts Blu-ray PGS (`.sup`) and DVD VobSub (`.sub`/`.idx`) to SRT via
 OCR, converts Final Cut Pro `.itt`, and extracts subtitle tracks from MKV files.
 
-Read `RUNNING_NOTES.md` first — it holds the decisions, baselines, and the list
-of approaches already tried and rejected.
+`docs/` holds the design context: `product-roadmap.md` for where this is going,
+`ocr-engine-evaluation.md` for why each OCR engine was chosen, and
+`fixtures.md` for how the test corpus works.
 
 ## Commands
 

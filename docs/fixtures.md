@@ -1,7 +1,11 @@
 # Fixtures
 
-Two tiers: small ones committed to the repo and run by CI, and a large local
-set used for the OCR quality gate.
+Two tiers: small fixtures committed to the repo and exercised by CI, and a
+larger local corpus used for the OCR quality gate.
+
+The local corpus is not distributed. It is built from commercial discs, so it
+cannot be redistributed, and it is large. Everything CI needs is committed; the
+gate is an optional extra you can point at your own material.
 
 ## Committed (`tests/fixtures/`)
 

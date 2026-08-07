@@ -1,8 +1,9 @@
 # OCR Improvement Brief
 
 External brief on improving OCR for bitmap subtitle formats, kept as the
-starting point for the portable-recogniser work (see the "portable OCR gap" in
-RUNNING_NOTES). It is a proposal, not a description of this codebase: parts are
+starting point for closing the gap in VobSub quality on Windows and Linux,
+where Apple Vision is unavailable. It is a proposal, not a description of this
+codebase: parts are
 already done (the engine adapter boundary, benchmark tooling, preprocessing
 variants), and parts are deliberately not planned yet.
 
