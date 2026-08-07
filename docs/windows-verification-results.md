@@ -8,14 +8,14 @@ First run of `docs/windows-verification.md` on real Windows hardware.
 | Machine | Windows 11 Education 26200, x64 |
 | Node | v24.18.0 (npm 11.16.0) |
 | Starting state | Fresh clone, no `node_modules`, none of the four media tools installed |
-| Commits from this session | `c1be788`, `1abbf98` |
+| Commits from this session | `c1be788`, `1abbf98`, `f574e6e`, `e81162f`, `19bc3e5`, `06528ac` |
 
 Tool versions as installed by the README's `winget` line:
 
 | Tool | Version |
 | --- | --- |
 | FFmpeg | 9.0-full_build (Gyan) |
-| Tesseract | 5.4.0.20240606 (UB-Mannheim) |
+| Tesseract | 5.4.0.20240606 (UB-Mannheim), later 5.5.3.20260724 (upstream) — see F6 |
 | ImageMagick | 7.1.2-29 Q16-HDRI |
 | MKVToolNix | 100.0 |
 
@@ -50,17 +50,24 @@ data present, "All required dependencies are available".
 
 | Check | Result |
 | --- | --- |
-| `npm run app:desktop` builds and opens at a sensible size | **Blocked** → see F7 |
-| Layout matches macOS | **Not run** |
+| `npm run app:desktop` builds and opens at a sensible size | **Pass**, after F7 |
+| Layout matches macOS | **Not run** — needs a side-by-side eye |
 | Kill from Task Manager leaves no `node` bridge process | **Not run** |
 | Dialogs work from the desktop window | **Not run** |
 
-Rust 1.97.1 was installed for this run. The build then failed on a missing C++
-linker (F7); the remaining checks are still unrun.
+Rust 1.97.1 and the MSVC C++ build tools were installed for this run; the build
+needed both (F7). The window then opened at **1396×969** on a 1920×1080 monitor
+(working area 1920×1032) — comfortably inside it, neither cramped nor oversized.
+It spawns the bridge as a child `node.exe` alongside `msedgewebview2.exe`.
+
+The three remaining checks are unrun, not passing.
 
 ## OCR quality
 
-Full gate over the local corpus, 45 SUP tracks, 28550 reference cues:
+Full gate over the local corpus, 45 SUP tracks, 28550 reference cues.
+
+**Under Tesseract 5.4.0 the gate fails** on `missing cues 6 > 0`. Every other
+threshold passes, and 0.66% CER is inside the 1% budget:
 
 ```
 npm run ocr:gate
@@ -68,12 +75,29 @@ TOTAL   ref 28550   got 28545   missing 6   extra 0   unverified 1
         shifted 0   end-mismatch 0   exact 25663/28550   CER 0.66%
 ```
 
-**The gate fails**, on `missing cues 6 > 0`. Every other threshold passes, and
-0.66% CER is inside the 1% budget. See F6 — this is a real limitation, not a
-code defect, and it is not fixed.
+macOS on the same corpus and day: `28550 cues · 0 missing · 0 extra ·
+1 unverified · 0 end mismatches · 0.66% CER`. Identical CER, and the whole
+difference is the 6 dropped cues.
 
-Single-file sanity check against its reference (`Stargate1`, 70 cues): 0 missing,
-0 extra, 66/70 exact, **0.28% CER**.
+F6 traces that to the Tesseract version. **Under 5.5.3 the gate passes**, on a
+clean regeneration of all 45 tracks with `--no-cache` (19m45s):
+
+```
+npm run ocr:gate
+TOTAL   ref 28550   got 28551   missing 0   extra 0   unverified 1
+        shifted 0   end-mismatch 0   exact 25717/28550   CER 0.66%
+OCR quality gate passed.
+```
+
+That is the macOS baseline on every axis — same cue count, same 0 missing, same
+single unverified cue (`The Matrix`, a known reference gap), same 0.66% CER. The
+two failing tracks come out at 1107/1107 and 28/28.
+
+So there is **no Windows-specific OCR drift**. The entire gap was the Tesseract
+version, and no threshold was changed to reach this.
+
+Single-file sanity check against its reference (`Stargate1`, 70 cues, Tesseract
+5.4.0): 0 missing, 0 extra, 66/70 exact, **0.28% CER**.
 
 ## Known sharp edges
 
@@ -175,7 +199,7 @@ There is also an argument that the current behaviour is closer to platform
 convention: Windows deliberately flashes a background-opened window in the
 taskbar instead of letting it steal focus.
 
-### F6 — OCR gate cannot pass on Windows — real, not fixed
+### F6 — OCR gate failed on Windows: Tesseract 5.4.0 drops cues — fixed
 
 Six missing cues, and they are the *same three cues* twice: `_t02` and its
 forced-subtitle subset `_t021` from `Stranger Things Season 4 Disc 2` both
@@ -198,24 +222,59 @@ running Tesseract on the extracted image directly:
 | psm 8 | `bit,` |
 | psm 13 | `bit,` |
 
-So this Tesseract build cannot read that image: short, low-contrast,
-drop-shadowed, leading ellipsis. Hand-tuned preprocessing made it worse, not
-better; the pipeline's own variants are better tuned than anything tried here.
+**Cause: the Tesseract version, not the platform.** macOS had 5.5.1, this
+machine had 5.4.0 — the newest the widely-recommended `UB-Mannheim.TesseractOCR`
+winget package ships.
 
-The likely explanation is the documented design rather than a regression. The
-README already says macOS probes each Blu-ray track and can fall back to Apple
-Vision, and that "Windows and Linux have no such net". The macOS baseline for
-this track was probably produced by Vision.
+The first hypothesis here was wrong and is worth recording as such. Because the
+README says macOS probes each Blu-ray track and can fall back to Apple Vision
+while "Windows and Linux have no such net", the missing cues looked like the
+absent Vision safety net. The macOS baseline disproves it: that track ran
+`tesseract-accurate`, with zero Vision switches logged across all 43 non-Stargate
+tracks. macOS read the cues as `...hit,` — a one-character mismatch against the
+reference's `...hit.`, counted in CER rather than as missing.
 
-**This is unverified.** `RUNNING_NOTES.md` is gitignored and lives on the Mac, so
-the macOS baseline numbers were not available here, and macOS cannot be run from
-this machine. Before treating 6 missing cues as the expected Windows number,
-compare against the macOS baseline and confirm which engine produced that track.
+Installing 5.5.3 (`winget install tesseract-ocr.tesseract`) and rerunning the
+same track: **1107 cues instead of 1104**, all three reading `...hit,` —
+character for character what macOS produced.
 
-The consequence either way: `npm run ocr:gate` as currently configured
-(`--max-missing 0`) is a macOS gate. It cannot pass on Windows unless the
-threshold becomes platform-aware or the preprocessing learns this glyph style.
-Nothing was loosened to make it go green.
+Also worth recording: the diagnosis nearly went the other way. Running
+`tesseract` by hand on the extracted bitmap returns empty under *both* 5.4.0 and
+5.5.3. Only through the pipeline's preprocessing does the difference appear, so
+the raw-image check argues for platform drift and is simply wrong. The extracted
+bitmap is not what the pipeline feeds the OCR engine.
+
+Fixed in `19bc3e5`: a 5.5.0 version floor, `doctor` warning (not failing — an
+older Tesseract still converts, it is just lossier) when it finds an older
+build, and the install line switched to the upstream `tesseract-ocr.tesseract`
+package, since UB-Mannheim's stops below the floor.
+
+Confirmed corpus-wide: the gate passes under 5.5.3 with numbers identical to
+macOS. See "OCR quality" above. No gate threshold was loosened at any point.
+
+### F8 — a Tesseract upgrade did not invalidate the cache — fixed
+
+Found while confirming F6, and it undermined the F6 fix completely. After
+upgrading to 5.5.3 the whole 45-track regeneration "finished" in **3.3 seconds**
+and reproduced the exact missing cues the upgrade was supposed to fix.
+
+The cache key covers the source bytes and the requested options. `engine` is the
+*requested* engine, so `auto` hashes the same before and after an upgrade — but
+it does not produce the same text. Every already-converted file kept returning
+its 5.4.0 result forever. Anyone following the new "install Tesseract 5.5"
+advice would have seen no improvement and had nothing to explain why.
+
+Fixed in `06528ac`: the recogniser version is recorded on the entry and a
+mismatch reads as a miss.
+
+The first attempt put it *in the key*, and the test suite caught that this
+breaks "serves a cached conversion even when the tools are gone" — with no
+Tesseract on `PATH` the version reads as `absent`, which changes the key, so
+uninstalling ffmpeg or Tesseract would discard conversions that were already
+finished. The key has to stay computable without the tools, because the cache is
+consulted before preflight for exactly that reason. So an absent or unreadable
+version never invalidates, and neither does an entry written before the field
+existed.
 
 ### F7 — the desktop shell needs more than Rust on Windows — docs fixed
 
@@ -245,9 +304,24 @@ checklist remains unrun either way.
 
 ## Still open
 
-- Desktop shell checks are unrun. F7 blocked the build; the C++ build tools were
-  installing when this was written.
+- Three desktop shell checks: layout against macOS, scrollbars per tool, the
+  Task Manager kill leaving no orphaned bridge, and the dialogs from the desktop
+  window. The shell builds and opens; none of these has been run.
 - F5 is settled as documented-only: no code change, the reveal still opens
   behind the browser by design.
-- F6 needs the macOS baseline to confirm the explanation, then a decision on
-  what the gate should require on Windows.
+
+## Noted, not acted on
+
+Two performance observations from this run, deliberately left alone — neither is
+Windows-specific, and both touch code whose change would oblige a full `ocr:gate`
+re-run:
+
+- `--jobs auto` is capped at `maxAutomaticJobs = 16`, so it uses half of a
+  32-core machine. The ceiling's stated reason is memory, but each Tesseract
+  worker measures ~23MB, so the cap is far more conservative than it needs to be.
+- The SUP path's image extraction is single-threaded: `extractPgsPreviewImages`
+  takes no `jobs` argument (the SUB/IDX path does) and writes every PNG in a
+  sequential loop through `deflateSync`. Sampled over a minute of the gate run,
+  the machine still averaged 79% CPU with Tesseract live in 90% of samples, so
+  this is roughly 8% of wall time — visible as brief idle windows between
+  tracks, not a dominant cost.
