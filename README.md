@@ -36,13 +36,20 @@ sudo apt install nodejs npm ffmpeg tesseract-ocr imagemagick mkvtoolnix
 winget install OpenJS.NodeJS Gyan.FFmpeg UB-Mannheim.TesseractOCR ImageMagick.ImageMagick MoritzBunkus.MKVToolNix
 ```
 
-Then:
+Then install the CLI:
+
+```bash
+npm install -g subtitle-workbench
+subtitle-workbench doctor      # checks every dependency and says what is missing
+```
+
+Or run from source:
 
 ```bash
 git clone https://github.com/namjins/subtitle_workbench.git
 cd subtitle_workbench
 npm install
-npm run doctor      # checks every dependency and says what is missing
+npm run doctor
 ```
 
 `doctor` is the fastest way to diagnose a broken setup. It reports the path and
@@ -126,17 +133,23 @@ whole disc.
 
 ## OCR engines
 
-`auto` chooses per format, because no single engine wins at both:
+`auto` chooses per format and, for Blu-ray tracks, per disc — because no
+single engine wins everywhere:
 
 | Format | Engine |
 | --- | --- |
-| SUP (PGS) | Tesseract |
+| SUP (PGS), macOS | probes each track, picks Tesseract or Apple Vision |
+| SUP (PGS), elsewhere | Tesseract |
 | SUB/IDX (VobSub), macOS | Apple Vision |
 | SUB/IDX (VobSub), elsewhere | Tesseract |
 
-Apple Vision is markedly better on the outlined text DVDs use. That option does
-not exist on Windows and Linux, so VobSub results are currently weaker there.
-This is a known gap rather than a setting you can fix.
+Tuned Tesseract narrowly wins on the clean outlined fonts most Blu-rays use,
+but loses badly on discs that render subtitles with a heavy drop shadow —
+there Apple Vision is far stronger. On macOS the SUP converter reads a couple
+dozen frames with both engines first and keeps whichever handles that disc's
+style. Apple Vision does not exist on Windows and Linux, so shadowed-font
+Blu-rays and most DVDs convert noticeably worse there. This is a known gap
+rather than a setting you can fix.
 
 Override with `--ocr-engine tesseract-accurate`, `tesseract-hybrid` (faster,
 less accurate) or `macos-vision`.
