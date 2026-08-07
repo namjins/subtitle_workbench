@@ -38,22 +38,6 @@ function readOption(name, fallback = null) {
   return cli.option(name, fallback);
 }
 
-function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
-  });
-
-  if (result.error) {
-    throw new Error(`${command} failed: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} exited with ${result.status}\n${result.stderr ?? ""}`.trim(),
-    );
-  }
-  return result.stdout ?? "";
-}
 
 function runAsync(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
@@ -90,6 +74,19 @@ async function hashFile(path) {
   return createHash("sha1").update(await readFile(path)).digest("hex");
 }
 
+function runCapturingStderr(command, args) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) throw new Error(`${command} failed: ${result.error.message}`);
+  if (result.status !== 0) {
+    throw new Error(`${command} exited with ${result.status}\n${result.stderr ?? ""}`.trim());
+  }
+  return result.stderr ?? "";
+}
+
 function checkBinary(command) {
   if (!hasCommand(command)) {
     throw new Error(`Missing required binary: ${command}`);
@@ -106,11 +103,6 @@ function secondsToSrtTime(seconds) {
   return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${pad(millis, 3)}`;
 }
 
-function ptsFromFrameName(file) {
-  const match = file.match(/frame-(\d+)\.png$/u);
-  if (!match) return null;
-  return Number(match[1]) / 1_000_000;
-}
 
 async function imageStatsAsync(imagePath) {
   const output = await runAsync("magick", [
@@ -148,36 +140,66 @@ async function prepareSubIdxImage(inputPath, outputPath, stats) {
 }
 
 async function extractSubIdxImages(input, workingDirectory, jobs) {
-  run(
-    "ffmpeg",
-    [
-      "-v",
-      "error",
-      "-y",
-      "-i",
-      input,
-      "-filter_complex",
-      "[0:s:0]scale=iw:ih[v]",
-      "-map",
-      "[v]",
-      "-fps_mode",
-      "passthrough",
-      "-frame_pts",
-      "true",
-      join(workingDirectory, "frame-%010d.png"),
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+  // Frames are numbered sequentially and their timestamps come from the
+  // showinfo filter, not from the filename.
+  //
+  // `-frame_pts true` names each file after its PTS, so when a subtitle's clear
+  // frame lands on the same timestamp as the next subtitle's show frame,
+  // ffmpeg reports "non monotonically increasing dts" and drops one of them
+  // entirely. On Office Space that silently lost 6 frames, and those are the
+  // cues the benchmark reports as shifted: the text then surfaces against a
+  // later timestamp, 0.1s to 2.5s out. Sequential naming keeps every frame, and
+  // showinfo reports an exact PTS for each one.
+  const ffmpegLog = runCapturingStderr("ffmpeg", [
+    "-v",
+    "info",
+    "-y",
+    "-i",
+    input,
+    "-filter_complex",
+    "[0:s:0]scale=iw:ih[s];[s]showinfo[out]",
+    "-map",
+    "[out]",
+    "-fps_mode",
+    "passthrough",
+    join(workingDirectory, "frame-%06d.png"),
+  ]);
+
+  const timestamps = Array.from(ffmpegLog.matchAll(/pts_time:(\d+(?:\.\d+)?)/gu)).map(
+    (match) => Number(match[1]),
   );
 
-  const frames = (await readdir(workingDirectory))
+  const files = (await readdir(workingDirectory))
     .filter((file) => /^frame-\d+\.png$/u.test(file))
-    .sort()
-    .map((file) => ({
-      file,
-      path: join(workingDirectory, file),
-      pts: ptsFromFrameName(file),
-    }))
-    .filter((frame) => frame.pts !== null);
+    .sort();
+
+  if (files.length !== timestamps.length) {
+    throw new Error(
+      `ffmpeg wrote ${files.length} frame(s) but reported ${timestamps.length} timestamp(s) for ` +
+        `${basename(input)}; refusing to guess which cue each image belongs to.`,
+    );
+  }
+
+  const frames = files.map((file, index) => ({
+    file,
+    path: join(workingDirectory, file),
+    pts: timestamps[index],
+  }));
+
+  // The end of a cue is the next frame at a *strictly later* timestamp. A clear
+  // frame can share an identical PTS with the following show frame, and taking
+  // the immediate neighbour then produced a zero-length cue.
+  const nextLaterPts = new Array(frames.length);
+  for (let index = frames.length - 1; index >= 0; index -= 1) {
+    const following = frames[index + 1];
+    if (!following) {
+      nextLaterPts[index] = null;
+    } else if (following.pts > frames[index].pts) {
+      nextLaterPts[index] = following.pts;
+    } else {
+      nextLaterPts[index] = nextLaterPts[index + 1];
+    }
+  }
 
   const prepared = new Array(frames.length);
   let nextFrameIndex = 0;
@@ -198,7 +220,7 @@ async function extractSubIdxImages(input, workingDirectory, jobs) {
       prepared[index] = {
         path: outputPath,
         pts: frame.pts,
-        endPts: frames[index + 1]?.pts ?? frame.pts + 2.5,
+        endPts: nextLaterPts[index] ?? frame.pts + 2.5,
       };
     }
   }
