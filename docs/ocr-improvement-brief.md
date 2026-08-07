@@ -1,11 +1,10 @@
 # OCR Improvement Brief
 
-External brief on improving OCR for bitmap subtitle formats, kept as the
-starting point for closing the gap in VobSub quality on Windows and Linux,
-where Apple Vision is unavailable. It is a proposal, not a description of this
-codebase: parts are
-already done (the engine adapter boundary, benchmark tooling, preprocessing
-variants), and parts are deliberately not planned yet.
+External brief on improving OCR for bitmap subtitle formats, kept for
+historical context. Its premise has since been largely resolved without a
+neural engine: per-image preprocessing repairs took portable VobSub from
+16.68% to 2.47% CER against Vision's 1.83% (see RUNNING_NOTES baselines).
+It is a proposal, not a description of this codebase.
 
 `docs/ocr-engine-evaluation.md` is the distilled version with decisions applied.
 

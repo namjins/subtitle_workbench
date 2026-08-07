@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { join } from "node:path";
 import {
   buildMkvExtractPlan,
   parseMkvSubtitleTracks,
@@ -49,13 +50,13 @@ test("builds mkvextract output specs for VobSub and PGS", () => {
   assert.deepEqual(
     plan.map((item) => item.spec),
     [
-      "2:/tmp/out/Spy Game (2001).sub",
-      "3:/tmp/out/Spy Game (2001)1-forced.sup",
+      `2:${join("/tmp/out", "Spy Game (2001).sub")}`,
+      `3:${join("/tmp/out", "Spy Game (2001)1-forced.sup")}`,
     ],
   );
   assert.deepEqual(plan[0].outputs, [
-    "/tmp/out/Spy Game (2001).sub",
-    "/tmp/out/Spy Game (2001).idx",
+    join("/tmp/out", "Spy Game (2001).sub"),
+    join("/tmp/out", "Spy Game (2001).idx"),
   ]);
 });
 

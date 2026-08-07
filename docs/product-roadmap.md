@@ -1,85 +1,63 @@
 # Product Roadmap
 
-Goal: ship Subtitle Workbench as a self-contained desktop app for macOS, Windows,
-and Linux, with equivalent CLI workflows for automation and batch use.
+Goal: ship Subtitle Workbench as a desktop app for macOS, Windows, and Linux,
+with equivalent CLI workflows for automation and batch use.
 
-## Recommended Shape
+Updated 2026-08-07. The engine, CLI, bridge, web UI, and a working Tauri
+desktop shell exist; what remains is distribution.
 
-Use a shared conversion engine with two front doors:
+## Shape (settled)
 
-- Desktop app: Tauri shell around the existing React workbench.
-- CLI: `subtitle-workbench` command that calls the same conversion engine.
+A shared conversion engine behind two front doors:
 
-Tauri is the preferred desktop target because it can reuse the web UI, produces
-smaller native app bundles than Chromium-based desktop shells, and supports
-bundled sidecar binaries for local tools such as `ffmpeg`, `ffprobe`,
-`mkvextract`, and `tesseract`.
+- **Desktop app** — `src-tauri/`, a thin Tauri 2 shell that starts the local
+  bridge on a private port and opens a native window on it. The bridge owns
+  the job queue, token auth, and native file picking on all three platforms.
+- **CLI** — `subtitle-workbench`, the same engine for batch and automation.
 
-Electron remains a fallback if Tauri sidecar or packaging constraints get in
-the way, especially if Node-native desktop integration becomes more important
-than app size.
+**Tools are user-installed, not bundled** (decided 2026-08-07): ffmpeg,
+tesseract, ImageMagick, MKVToolNix come from the user's package manager, with
+`doctor` and the UI's startup check as the guide. The price of that choice is
+that setup instructions must work for non-experts. Bundled sidecars remain a
+possible later upgrade, not a v1 requirement.
 
-## Architecture
+## Done
 
-```text
-React Workbench
-      |
-      v
-Shared subtitle engine  <---->  CLI command
-      |
-      v
-Local tool adapters
-      |
-      +-- ffmpeg / ffprobe
-      +-- mkvinfo / mkvextract
-      +-- OCR engine adapters
-          +-- tesseract baseline
-          +-- future ONNX recognizer experiment
-```
+1. **Shared engine** — `lib/subtitle-core.mjs` (text formats),
+   `lib/pgs-decoder.mjs` (shared CLI/browser PGS decode), OCR engine adapters
+   with per-track probing and per-image preprocessing repairs. Gate: 0.66%
+   CER over 28,550 SUP cues; VobSub 2.47% portable / 1.83% Vision.
+2. **CLI** — stable subcommands, JSON events, content-keyed conversion cache,
+   fixture-based tests, three-OS CI.
+3. **Desktop shell** — window sized to the layout, bridge lifetime tied to
+   the window (no orphan survives even SIGKILL), native pickers and
+   reveal-in-file-manager through the bridge.
 
-## Milestones
+Removed along the way: ITT to SRT (2026-08-07, no longer needed) and the
+planned ONNX recognizer (preprocessing closed the portable OCR gap to 0.64
+CER points — see `portable-ocr-plan.md` for the bar to revive it).
 
-1. Shared Engine
-   - Keep text conversion logic in `lib/subtitle-core.mjs`.
-   - Add tests with fixture subtitles for VTT, ASS, SMI, MicroDVD, MPL2, and SRT.
-   - Move OCR timing cleanup into shared helpers once real samples are tested.
-   - Add an OCR adapter boundary before testing alternate recognizers.
+## Remaining
 
-2. CLI
-   - Expand `tools/subtitle-workbench.mjs` with stable subcommands.
-   - Add fixture-based CLI tests.
-   - Support JSON output for automation.
-   - Add recursive batch options and overwrite/skip controls.
-
-3. Desktop App
-   - Add a Tauri shell that loads the current React UI.
-   - Replace copied shell commands with native file pickers and progress logs.
-   - Run conversion work through local command handlers.
-   - Store preferences in the OS app-data directory.
-
-4. Bundled Dependencies
-   - Bundle platform-specific sidecars:
-     - `ffmpeg`
-     - `ffprobe`
-     - `mkvinfo`
-     - `mkvextract`
-     - `tesseract`
-     - OCR language data
-     - optional OCR model/runtime files after benchmarking
-   - Detect bundled binaries before falling back to system `PATH`.
-   - Keep licenses for every bundled binary in the app.
-
-5. Distribution
-   - macOS: `.dmg` plus signed/notarized `.app`.
+4. **Distribution**
+   - macOS: signed/notarized `.app` + `.dmg`.
    - Windows: NSIS installer first; MSI later if needed.
    - Linux: AppImage first; `.deb`/`.rpm` later if useful.
-   - Build each platform on its native CI runner unless cross-builds are proven
-     reliable for this exact app.
+   - Build each platform on its native CI runner.
+   - PATH resolution for GUI-launched apps (a double-clicked app does not
+     inherit the shell PATH; node and Homebrew paths must be found).
+   - First-run experience: walk a non-expert through installing the tools,
+     driven by `doctor`, without assuming a terminal.
+   - Auto-update and uninstall story.
+
+5. **Smaller known items** — see RUNNING_NOTES "Outstanding": preferences in
+   OS app-data, `--skip-existing` TOCTOU and job events, DOM tests replacing
+   the source-grep tests, per-job log path in the UI.
+
+6. **Ship** — `npm publish` + `git tag` when the user calls it complete
+   (decided: ship once complete, not incrementally).
 
 ## References
 
-- Tauri overview: https://tauri.app/start/
-- Tauri sidecars: https://tauri.vip/develop/sidecar/
+- Tauri: https://tauri.app/
 - Tauri Windows installer: https://tauri.app/distribute/windows-installer/
-- Electron packaging: https://www.electronjs.org/docs/latest/tutorial/application-distribution
-- Node single executable apps: https://nodejs.org/download/release/latest-jod/docs/api/single-executable-applications.html

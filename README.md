@@ -26,8 +26,11 @@ brew install node ffmpeg tesseract imagemagick mkvtoolnix
 **Debian / Ubuntu**
 
 ```bash
-sudo apt install nodejs npm ffmpeg tesseract-ocr imagemagick mkvtoolnix
+sudo apt install nodejs npm ffmpeg tesseract-ocr imagemagick mkvtoolnix zenity
 ```
+
+(`zenity` powers the native file-picker dialog; most desktop Linux systems
+already have it.)
 
 **Windows**
 
@@ -35,7 +38,11 @@ sudo apt install nodejs npm ffmpeg tesseract-ocr imagemagick mkvtoolnix
 winget install OpenJS.NodeJS Gyan.FFmpeg UB-Mannheim.TesseractOCR ImageMagick.ImageMagick MoritzBunkus.MKVToolNix
 ```
 
-Then install the CLI:
+Close and reopen the terminal afterwards so the newly installed tools are
+found, then run the doctor check below.
+
+Then install the CLI (once this package is published; until then use the
+from-source steps below):
 
 ```bash
 npm install -g subtitle-workbench
@@ -113,7 +120,7 @@ whole disc.
 
 | Option | Meaning |
 | --- | --- |
-| `--out FILE` / `--out-dir DIR` | Where to write. Defaults to beside the input. |
+| `--out FILE` / `--out-dir DIR` | Where to write. Defaults to beside the input, named `movie-eng.srt` (the language is part of the name so tracks in different languages do not overwrite each other). |
 | `--jobs auto` \| `N` | Parallelism. `auto` reserves one core for the rest of your machine. |
 | `--lang eng` | OCR language. Needs matching Tesseract language data installed. |
 | `--ocr-engine auto` | See below. |

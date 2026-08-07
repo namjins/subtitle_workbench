@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import test from "node:test";
 import {
   createLocalBridgeServer,
@@ -28,7 +28,9 @@ async function buildUiRoot() {
 }
 
 test("never resolves a UI path outside the build directory", () => {
-  const root = "/tmp/example-dist";
+  // resolve() so the containment comparison speaks the platform's own
+  // absolute-path dialect ("/tmp/..." becomes "D:\tmp\..." on Windows).
+  const root = resolve("/tmp/example-dist");
 
   // URL parsing already collapses "..", and percent-encoded traversal is
   // decoded before the leading-".." strip, so these land inside the root rather
@@ -46,7 +48,7 @@ test("never resolves a UI path outside the build directory", () => {
     const resolved = resolveUiAssetPath(root, requestUrl);
     if (resolved === null) continue;
     assert.ok(
-      resolved === root || resolved.startsWith(`${root}/`),
+      resolved === root || resolved.startsWith(root + sep),
       `${requestUrl} escaped the build directory: ${resolved}`,
     );
   }

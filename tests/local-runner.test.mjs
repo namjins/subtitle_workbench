@@ -12,7 +12,7 @@ test("builds subtitle-workbench JSON event command arguments", () => {
     jobs: 4,
   });
 
-  assert.match(args[0], /tools\/subtitle-workbench\.mjs$/u);
+  assert.match(args[0], /tools[\\/]subtitle-workbench\.mjs$/u);
   // Flags first, then `--`, then inputs: an input that looks like a flag must
   // not be re-parsed as one by the CLI.
   assert.deepEqual(args.slice(1), [

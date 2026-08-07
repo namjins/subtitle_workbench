@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { hasCommand } from "../lib/platform-paths.mjs";
+import { hasCommand, imageMagickCommand } from "../lib/platform-paths.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 import { buildPgsFixture } from "../tools/make_pgs_fixture.mjs";
 
@@ -16,7 +16,7 @@ const realSup = fileURLToPath(new URL("./fixtures/real-two-cues.sup", import.met
 
 // OCR needs tesseract and ImageMagick. Skip rather than fail where they are
 // absent (a bare CI runner), but never skip the decode-only assertions.
-const canOcr = hasCommand("tesseract") && hasCommand("magick") && hasCommand("ffmpeg");
+const canOcr = hasCommand("tesseract") && imageMagickCommand() !== null && hasCommand("ffmpeg");
 
 function runCli(args, options = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
@@ -112,7 +112,7 @@ test("fails loudly instead of writing an empty SRT", async () => {
   });
 });
 
-test("writes an empty SRT for a track that renders nothing", async () => {
+test("writes an empty SRT for a track that renders nothing", { skip: !canOcr && "OCR tools unavailable" }, async () => {
   // A blank forced/overlay track is real — several exist in the fixture corpus
   // with correctly empty reference SRTs — so it must not be treated as damaged.
   await withTempDir(async (dir) => {
@@ -128,7 +128,7 @@ test("writes an empty SRT for a track that renders nothing", async () => {
   });
 });
 
-test("keeps converting a batch after one file fails", async () => {
+test("keeps converting a batch after one file fails", { skip: !canOcr && "OCR tools unavailable" }, async () => {
   await withTempDir(async (dir) => {
     const good = join(dir, "good.sup");
     const bad = join(dir, "bad.sup");

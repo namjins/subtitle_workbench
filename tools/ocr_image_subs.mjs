@@ -13,7 +13,7 @@ import {
   writeCachedConversion,
 } from "../lib/conversion-cache.mjs";
 import { installInstructionsForPlatform } from "../lib/dependency-doctor.mjs";
-import { cacheDirectory, hasCommand } from "../lib/platform-paths.mjs";
+import { cacheDirectory, hasCommand, imageMagickCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
 import { toSrtDocument } from "../lib/subtitle-core.mjs";
@@ -98,7 +98,10 @@ function runCapturingStderr(command, args) {
 // install commands for this platform, instead of one bare binary name per
 // failed attempt.
 function checkBinaries(commands) {
-  const missing = [...new Set(commands)].filter((command) => !hasCommand(command));
+  // "magick" is satisfied by either ImageMagick 7's magick or 6's convert.
+  const missing = [...new Set(commands)]
+    .map((command) => (command === "magick" ? imageMagickCommand() ?? "magick" : command))
+    .filter((command) => !hasCommand(command));
   if (!missing.length) return;
   throw new Error(
     [
@@ -121,7 +124,7 @@ function secondsToSrtTime(seconds) {
 
 
 async function imageStatsAsync(imagePath) {
-  const output = await runAsync("magick", [
+  const output = await runAsync(imageMagickCommand() ?? "magick", [
     imagePath,
     "-alpha",
     "off",
@@ -141,7 +144,7 @@ async function imageStatsAsync(imagePath) {
 
 async function prepareSubIdxImage(inputPath, outputPath, stats) {
   const borderColor = stats.mean < 0.5 ? "black" : "white";
-  await runAsync("magick", [
+  await runAsync(imageMagickCommand() ?? "magick", [
     inputPath,
     "-alpha",
     "off",
