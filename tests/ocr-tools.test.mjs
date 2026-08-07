@@ -9,6 +9,8 @@ import {
 import { compareSrt, parseSrtText } from "../lib/srt-metrics.mjs";
 
 test("cleans common subtitle OCR artifacts conservatively", () => {
+  // Generic repairs: glyph confusions and punctuation damage that any bitmap
+  // subtitle track can produce.
   assert.equal(cleanOcrText("-[growling]\n-[screaming]"), "- [growling]\n- [screaming]");
   assert.equal(cleanOcrText("sighs],"), "[sighs]");
   assert.equal(cleanOcrText("Ec."), "E...");
@@ -16,10 +18,6 @@ test("cleans common subtitle OCR artifacts conservatively", () => {
   assert.equal(cleanOcrText("| was here"), "I was here");
   assert.equal(cleanOcrText(".--Speak."), "...Speak.");
   assert.equal(cleanOcrText("..-even"), "...even");
-  assert.equal(cleanOcrText("..-0f one"), "...of one");
-  assert.equal(cleanOcrText("..-1 have"), "...I have");
-  assert.equal(cleanOcrText("..-@8 your life"), "...as your life");
-  assert.equal(cleanOcrText("...| Know you're good"), "...I know you're good");
   assert.equal(cleanOcrText("- | want him"), "- I want him");
   assert.equal(cleanOcrText("[Siren Blaring 1"), "[Siren Blaring]");
   assert.equal(cleanOcrText("['Speaking Chinese 1"), "[Speaking Chinese]");
@@ -28,6 +26,31 @@ test("cleans common subtitle OCR artifacts conservatively", () => {
   assert.equal(cleanOcrText("|--"), "");
   assert.equal(cleanOcrText("“Hi”"), '"Hi"');
   assert.equal(cleanOcrText("Oh."), "Oh.");
+});
+
+test("applies corpus-fitted rules only when asked", () => {
+  // These name specific words rather than describing a glyph confusion, so
+  // they are off by default: leaving them on made the SUP benchmark partly a
+  // measure of the data the rules were derived from.
+  const fitted = { profile: "fitted" };
+
+  assert.equal(cleanOcrText("..-0f one", fitted), "...of one");
+  assert.equal(cleanOcrText("..-1 have", fitted), "...I have");
+  assert.equal(cleanOcrText("..-@8 your life", fitted), "...as your life");
+  assert.equal(cleanOcrText("...| Know you're good", fitted), "...I know you're good");
+
+  // Default leaves the word-specific corrections alone, while still applying
+  // the generic pipe/I and ellipsis repairs.
+  assert.equal(cleanOcrText("..-0f one"), "...0f one");
+  assert.equal(cleanOcrText("..-@8 your life"), "..-@8 your life");
+  assert.equal(cleanOcrText("...| Know you're good"), "...I Know you're good");
+});
+
+test("rejects an unknown text cleanup profile", () => {
+  assert.throws(
+    () => createOcrEngine("tesseract-accurate", { textCleanup: "nonsense" }),
+    /text cleanup profile/iu,
+  );
 });
 
 test("uses automatic OCR as the flow-aware default engine", () => {

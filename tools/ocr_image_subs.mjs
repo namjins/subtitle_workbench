@@ -28,6 +28,7 @@ const cli = parseArgv(process.argv, {
     "--ocr-command",
     "--ocr-engine",
     "--out",
+    "--text-cleanup",
   ]),
 });
 
@@ -335,6 +336,7 @@ async function main() {
   const engine = createOcrEngine(readOption("--ocr-engine", "auto"), {
     mode,
     ocrCommand: readOption("--ocr-command"),
+    textCleanup: readOption("--text-cleanup", "generic"),
   });
   // The pipeline always needs ImageMagick, whichever engine is selected.
   // Checking only engine.requiredBinaries let a Vision run (which declares
