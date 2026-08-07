@@ -1026,10 +1026,21 @@ ol.batch-tabs {
 /* On a 1080p-or-wider screen the explainer prose moves beside the workflow
    instead of below it, so the whole tool fits without scrolling. */
 @media (min-width: 1360px) {
+  /* The outer stage wrapper also carries a 760px max-width; leaving it in
+     place crammed the whole two-column grid into 760px and pinched the
+     workflow column to ~380px. */
+  .extract-page {
+    max-width: none;
+  }
+
   .extract-start-page,
   .batch-page {
     max-width: none;
-    grid-template-columns: minmax(0, 760px) minmax(280px, 480px);
+    /* The workflow column flexes and can never collapse; the rail is a
+       fixed-width sidebar. An earlier minmax(0, 760px) left column let one
+       engine shrink the workflow to ~240px while the rail kept its
+       maximum. */
+    grid-template-columns: minmax(0, 1fr) 340px;
     column-gap: 44px;
     /* The rail spans a big row count so it can sit beside any number of
        left-column blocks; with a row-gap, every phantom row it spans would
@@ -1041,6 +1052,7 @@ ol.batch-tabs {
   .extract-start-page > :not(.about-copy),
   .batch-page > :not(.about-copy) {
     grid-column: 1;
+    max-width: 860px;
     margin-bottom: 22px;
   }
 

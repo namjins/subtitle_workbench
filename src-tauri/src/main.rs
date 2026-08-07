@@ -135,6 +135,15 @@ fn main() {
                 let logical_height = monitor.size().height as f64 / scale;
                 width = width.min(logical_width - 20.0).max(800.0);
                 height = height.min(logical_height - 80.0).max(600.0);
+                eprintln!(
+                    "window sizing: monitor physical {:?} scale {} -> logical {}x{} -> window {}x{}",
+                    monitor.size(),
+                    scale,
+                    logical_width,
+                    logical_height,
+                    width,
+                    height,
+                );
             }
 
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
