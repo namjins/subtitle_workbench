@@ -5,6 +5,7 @@ import {
   safeUploadName,
   validateJob,
   validatePickRequest,
+  windowsPickScript,
   writeSse,
 } from "../lib/local-bridge-server.mjs";
 
@@ -73,6 +74,26 @@ test("validates native file picker requests", () => {
     multiple: false,
   });
   assert.deepEqual(validatePickRequest({}), { extensions: [], multiple: false });
+});
+
+test("shows the Windows file dialog owned by a topmost form", () => {
+  // Regression: an unowned ShowDialog() opened the picker *behind* the browser,
+  // because a background process cannot take focus. The dialog is modal, so the
+  // app looked frozen. Verified on Windows 11 by z-order probe: unowned it sat
+  // behind the browser, owned by this topmost form it comes out in front.
+  const script = windowsPickScript({ extensions: ["sup"], multiple: true });
+  assert.match(script, /\$owner\.TopMost = \$true/u);
+  assert.match(script, /\$owner\.ShowInTaskbar = \$false/u);
+  assert.match(script, /ShowDialog\(\$owner\)/u);
+  // The owner must never be visible, and must always be cleaned up.
+  assert.match(script, /SetBounds\(-32000, -32000, 1, 1\)/u);
+  assert.match(script, /finally \{ \$owner\.Dispose\(\) \}/u);
+  // A bare ShowDialog() is exactly the bug; it must not reappear.
+  assert.doesNotMatch(script, /ShowDialog\(\)/u);
+
+  assert.match(script, /\$d\.Multiselect = \$true/u);
+  assert.match(windowsPickScript({}), /\$d\.Multiselect = \$false/u);
+  assert.match(windowsPickScript({}), /All files/u);
 });
 
 test("refuses ocrCommand from the network", () => {
