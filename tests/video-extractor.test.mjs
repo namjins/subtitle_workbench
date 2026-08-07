@@ -58,3 +58,19 @@ test("builds mkvextract output specs for VobSub and PGS", () => {
     "/tmp/out/Spy Game (2001).idx",
   ]);
 });
+
+test("does not offer DVB subtitle tracks for extraction", () => {
+  // DVB is not PGS. Extracting it to a .sup produced a file the OCR path
+  // decoded to nothing and reported as a successful, empty conversion.
+  const rows = parseMkvSubtitleTracks({
+    tracks: [
+      { id: 2, type: "subtitles", properties: { codec_id: "S_DVBSUB", language: "eng" } },
+      { id: 3, type: "subtitles", properties: { codec_id: "S_HDMV/PGS", language: "eng" } },
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => row.codec),
+    ["S_HDMV/PGS"],
+  );
+});

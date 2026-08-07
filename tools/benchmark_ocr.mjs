@@ -9,7 +9,7 @@ Usage:
   tools/benchmark_ocr.mjs --reference reference.srt --candidate candidate.srt [--json] [--details out.json] [--max-text-mismatches 100]
   tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir [--json] [--csv out.csv] [--details out.json] [--max-text-mismatches 100]
   tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir --timing-first [--fixture-metadata docs/fixture-metadata.json]
-  tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir --max-missing 0 --max-extra 0 --max-end-mismatches 0 --max-cer 0.01
+  tools/benchmark_ocr.mjs --examples-dir dir --candidate-dir dir --max-missing 0 --max-extra 0 --max-end-mismatches 0 --max-cer 0.01 [--min-fixtures 9]
 
 The directory mode pairs every .sup or .idx in --examples-dir with a reference
 <basename>-eng.srt and a candidate in --candidate-dir named either
@@ -53,11 +53,9 @@ function metadataForFixture(metadata, examplesDir, name) {
   for (const candidate of candidates) {
     if (metadata[candidate]) return metadata[candidate];
   }
-  for (const group of Object.values(metadata)) {
-    if (group && typeof group === "object" && group[name]) {
-      return group[name];
-    }
-  }
+  // Deliberately no bare-name search across other groups: with two fixture
+  // sets in play that attached one set's provenance note to the other set's
+  // results.
   return null;
 }
 
@@ -247,7 +245,7 @@ async function writeCsv(path, rows) {
         row.characterErrorRate,
         row.textEditDistance,
         row.referenceCharacters,
-        row.note,
+        row.note ?? "",
       ]
         .map(csvEscape)
         .join(","),
@@ -263,6 +261,12 @@ async function compareDirectory(
   detailOptions = {},
   fixtureMetadata = {},
 ) {
+  if (!existsSync(examplesDir)) {
+    throw new Error(`Examples directory not found: ${examplesDir}`);
+  }
+  if (!existsSync(candidateDir)) {
+    throw new Error(`Candidate directory not found: ${candidateDir}`);
+  }
   const files = await readdir(examplesDir);
   const sourceFiles = files.filter((file) => /\.(sup|idx)$/iu.test(file)).sort();
   const rows = [];
@@ -336,8 +340,23 @@ function aggregate(rows) {
   return totals;
 }
 
-function evaluateQualityGate(total, missingCandidates, thresholds) {
+function evaluateQualityGate(total, missingCandidates, thresholds, comparedCount = null) {
   const failures = [];
+
+  // A gate that compared nothing must never report success. aggregate([])
+  // returns all zeros, so an empty, renamed or mistyped --examples-dir used to
+  // print "OCR quality gate passed." having examined no files at all.
+  if (comparedCount !== null && comparedCount === 0) {
+    failures.push("0 fixtures compared: check --examples-dir and --candidate-dir");
+  }
+  if (
+    comparedCount !== null &&
+    thresholds.minFixtures !== null &&
+    comparedCount < thresholds.minFixtures
+  ) {
+    failures.push(`compared ${comparedCount} fixtures, expected at least ${thresholds.minFixtures}`);
+  }
+
   if (missingCandidates.length) {
     failures.push(`missing candidate/reference pairs: ${missingCandidates.length}`);
   }
@@ -391,6 +410,7 @@ async function main() {
     maxExtra: numberOption("--max-extra"),
     maxEndMismatches: numberOption("--max-end-mismatches"),
     maxCharacterErrorRate: numberOption("--max-cer"),
+    minFixtures: numberOption("--min-fixtures"),
   };
   const maxTextMismatches = Number(option("--max-text-mismatches", "100"));
   const detailOptions = {
@@ -430,7 +450,7 @@ async function main() {
   }
 
   const total = aggregate(rows);
-  const gate = evaluateQualityGate(total, missingCandidates, thresholds);
+  const gate = evaluateQualityGate(total, missingCandidates, thresholds, rows.length);
   if (csv) {
     await writeCsv(resolve(csv), [...rows, total]);
   }

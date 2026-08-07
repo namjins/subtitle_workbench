@@ -68,6 +68,7 @@ const valueOptions = new Set([
   "--max-end-mismatches",
   "--max-extra",
   "--max-missing",
+  "--min-fixtures",
   "--ocr-engine",
   "--ocr-command",
   "--out",

@@ -227,9 +227,14 @@ async function convert(
     const images = limit === null ? extractedImages : extractedImages.slice(0, limit);
 
     if (!images.length) {
-      await writeFile(output, toSrtDocument(""), "utf8");
-      process.stderr.write(`Wrote 0 cues to ${output}\n`);
-      return;
+      // Do not write an empty file and exit 0. Decoding nothing means the
+      // source was not the format we thought it was, or could not be read —
+      // both of which used to surface as a successful conversion producing a
+      // BOM-only SRT.
+      throw new Error(
+        `No subtitle images could be decoded from ${basename(input)}. ` +
+          "The file may be empty, damaged, or not the format this mode expects.",
+      );
     }
 
     const results = new Array(images.length);

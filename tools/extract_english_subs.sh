@@ -147,11 +147,16 @@ process_one_file() {
 
   while IFS="$(printf '\t')" read -r track_id codec_id track_lang; do
     [ -z "$track_id" ] && continue
-    ext="sup"
+    # DVB subtitles are intentionally skipped: they are not PGS, and writing
+    # them to a .sup produces a file the OCR path silently converts to an
+    # empty SRT.
     case "$codec_id" in
       S_VOBSUB*) ext="sub" ;;
-      S_HDMV/PGS*|S_DVBSUB*) ext="sup" ;;
-      *) ext="sup" ;;
+      S_HDMV/PGS*) ext="sup" ;;
+      *)
+        echo "[$(timestamp)] [PID $pid] SKIP   track $track_id $track_lang ($codec_id) is not a supported image subtitle format"
+        continue
+        ;;
     esac
 
     stem="$base"
