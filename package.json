@@ -52,7 +52,7 @@
   },
   "type": "module",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "description": "Convert Blu-ray PGS, DVD VobSub and Final Cut Pro subtitles to SRT, locally.",
+  "description": "Convert Blu-ray PGS and DVD VobSub subtitles to SRT, locally.",
   "keywords": [
     "subtitles",
     "srt",

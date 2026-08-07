@@ -100,46 +100,6 @@ test("keeps palette entries a palette-update segment does not mention", async ()
   });
 });
 
-test("converts ITT through the CLI", async () => {
-  await withTempDir(async (dir) => {
-    const input = join(dir, "captions.itt");
-    await writeFile(
-      input,
-      `<tt xmlns="http://www.w3.org/ns/ttml" ttp:frameRate="25">
-        <body><div>
-          <p begin="00:00:01:00" end="00:00:03:00">First <i>cue</i></p>
-          <p begin="00:00:04:00" dur="00:00:02:00">Second cue</p>
-        </div></div></body>
-      </tt>`,
-    );
-
-    const result = runCli(["itt-to-srt", "--out", join(dir, "out.srt"), "--", input]);
-    assert.equal(result.status, 0, result.stderr);
-
-    const srt = await readFile(join(dir, "out.srt"), "utf8");
-    // 25fps comes from ttp:frameRate, not from the default 23.976.
-    assert.match(srt, /00:00:01,000 --> 00:00:03,000/u);
-    assert.match(srt, /First <i>cue<\/i>/u);
-    assert.match(srt, /00:00:04,000 --> 00:00:06,000/u);
-  });
-});
-
-test("round-trips an SRT without destroying it", async () => {
-  await withTempDir(async (dir) => {
-    const input = join(dir, "movie.srt");
-    const source = ["1", "00:00:01,000 --> 00:00:05,000", "Hello world", ""].join("\r\n");
-    await writeFile(input, `\uFEFF${source}`);
-
-    const result = runCli(["itt-to-srt", "--", input]);
-    assert.equal(result.status, 0, result.stderr);
-
-    // The output must not be the input path, and the input must survive.
-    assert.equal(await readFile(input, "utf8"), `\uFEFF${source}`);
-    assert.ok(existsSync(join(dir, "movie-converted.srt")));
-    assert.match(await readFile(join(dir, "movie-converted.srt"), "utf8"), /Hello world/u);
-  });
-});
-
 test("fails loudly instead of writing an empty SRT", async () => {
   await withTempDir(async (dir) => {
     const input = join(dir, "empty.sup");
@@ -188,7 +148,7 @@ test("keeps converting a batch after one file fails", async () => {
 });
 
 test("refuses an input path that is really an option", async () => {
-  const result = runCli(["itt-to-srt", "--", "--ocr-command"]);
+  const result = runCli(["sup-to-srt", "--", "--ocr-command"]);
 
   assert.notEqual(result.status, 0);
   // The string still appears, because it is named as the missing input. What

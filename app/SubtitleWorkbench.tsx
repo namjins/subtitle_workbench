@@ -14,7 +14,7 @@ import {
 } from "./localBridgeClient";
 import { extractPgsPreviewsFromBuffer, type PgsPreview } from "./pgsPreview";
 
-type ToolId = "sup" | "subidx" | "itt" | "extract";
+type ToolId = "sup" | "subidx" | "extract";
 type QueueStep = "intake" | "review" | "run";
 type ExtractStage = QueueStep;
 type ExtractStatus = "ready" | "queued" | "extracting" | "complete";
@@ -22,7 +22,7 @@ type OcrRunStatus = "idle" | "running" | "complete";
 
 type BatchItem = {
   id: string;
-  kind: "sup" | "subidx" | "itt";
+  kind: "sup" | "subidx";
   name: string;
   language?: string;
   previews?: PgsPreview[];
@@ -87,12 +87,6 @@ const tools: Array<{
     detail: "VobSub subtitle pairs",
   },
   {
-    id: "itt",
-    label: "ITT to SRT",
-    eyebrow: "Text",
-    detail: "Final Cut Pro timed text",
-  },
-  {
     id: "extract",
     label: "Extract from Video",
     eyebrow: "Batch",
@@ -126,26 +120,8 @@ const extractQueueStepLabels: Record<QueueStep, string> = {
   run: "Run Extraction",
 };
 
-const textQueueStepLabels: Record<QueueStep, string> = {
-  intake: "Intake",
-  review: "Review",
-  run: "Convert",
-};
-
-const fpsOptions = [
-  ["24000/1001", "23.976"],
-  ["24", "24"],
-  ["25", "25"],
-  ["30000/1001", "29.97"],
-  ["30", "30"],
-  ["50", "50"],
-  ["60000/1001", "59.94"],
-  ["60", "60"],
-  ["other", "Other"],
-] as const;
-
 function baseName(name: string) {
-  return name.replace(/\.(sup|sub|idx|itt)$/i, "");
+  return name.replace(/\.(sup|sub|idx)$/i, "");
 }
 
 function languageName(code?: string) {
@@ -266,7 +242,6 @@ export function SubtitleWorkbench() {
     };
   }, []);
   const [extractStage, setExtractStage] = useState<ExtractStage>("intake");
-  const [extractVideoFile, setExtractVideoFile] = useState<File | null>(null);
   const [extractVideoName, setExtractVideoName] = useState("");
   const [extractVideoPath, setExtractVideoPath] = useState("");
   const [extractTracks, setExtractTracks] = useState<ExtractTrack[]>([]);
@@ -295,32 +270,18 @@ export function SubtitleWorkbench() {
   const [completedSrtFiles, setCompletedSrtFiles] = useState<string[]>([]);
   const [bridgeError, setBridgeError] = useState("");
   const [jobs, setJobs] = useState(detectSafeBrowserJobs);
-  const [fpsPreset, setFpsPreset] = useState("24000/1001");
-  const [customFps, setCustomFps] = useState("");
-  const isSubtitleTool = active === "sup" || active === "subidx" || active === "itt";
-  const isIttTool = active === "itt";
-  const isOcrTool = active === "sup" || active === "subidx";
-  const subtitleToolTitle =
-    active === "itt" ? "ITT to SRT" : active === "subidx" ? "SUB/IDX to SRT" : "SUP to SRT";
+  const isSubtitleTool = active === "sup" || active === "subidx";
+  const isOcrTool = isSubtitleTool;
+  const subtitleToolTitle = active === "subidx" ? "SUB/IDX to SRT" : "SUP to SRT";
   const subtitleToolDescription =
-    active === "itt"
-      ? "Add one or more Final Cut Pro ITT files, choose the source frame rate, then export SRT files."
-      : active === "subidx"
+    active === "subidx"
       ? "Add one or more VobSub pairs, then review the queue before OCR."
       : "Add one or more SUP files, then review the queue before OCR.";
-  const subtitleToolAccept = active === "itt" ? ".itt" : active === "subidx" ? ".sub,.idx" : ".sup";
+  const subtitleToolAccept = active === "subidx" ? ".sub,.idx" : ".sup";
   const subtitleToolInputLabel =
-    active === "itt"
-      ? "Select ITT files"
-      : active === "subidx"
-        ? "Select SUB/IDX files"
-        : "Select SUP files";
+    active === "subidx" ? "Select SUB/IDX files" : "Select SUP files";
   const subtitleToolEmptyLabel =
-    active === "itt"
-      ? "No ITT files selected."
-      : active === "subidx"
-        ? "No SUB/IDX files selected."
-        : "No SUP files selected.";
+    active === "subidx" ? "No SUB/IDX files selected." : "No SUP files selected.";
   const activeBatchItems = batchItems.filter(
     (item) => item.selected && item.kind === active,
   );
@@ -336,8 +297,6 @@ export function SubtitleWorkbench() {
   // which could never match what the CLI actually writes (`<base>.srt`) and
   // was displayed even when the run had failed outright.
   const visibleSrtFiles = completedSrtFiles;
-  const selectedFps = fpsPreset === "other" ? customFps.trim() : fpsPreset;
-  const validSelectedFps = /^\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?$/u.test(selectedFps);
   const currentBatchItem =
     batchLanguageId === null
       ? null
@@ -374,7 +333,6 @@ export function SubtitleWorkbench() {
 
   function selectExtractVideo(file?: File) {
     const path = (file as (File & { path?: string }) | undefined)?.path ?? "";
-    setExtractVideoFile(file ?? null);
     setExtractVideoName(file?.name ?? "");
     setExtractVideoPath(path);
     setExtractTracks([]);
@@ -410,7 +368,6 @@ export function SubtitleWorkbench() {
       const picked = await pickBridgeFile(["mkv"]);
       // Cancelled dialog: leave everything exactly as it was.
       if (!picked.path) return;
-      setExtractVideoFile(null);
       setExtractVideoPath(picked.path);
       setExtractVideoName(picked.name || fileNameFromPath(picked.path));
       setExtractTracks([]);
@@ -555,15 +512,12 @@ export function SubtitleWorkbench() {
 
   async function loadSubtitleFiles(files: File[]) {
     const supFiles: File[] = [];
-    const ittFiles: File[] = [];
     const subIdxGroups = new Map<string, { idx?: File; sub?: File }>();
 
     for (const file of files) {
       const lowerName = file.name.toLowerCase();
       if (active === "sup" && lowerName.endsWith(".sup")) {
         supFiles.push(file);
-      } else if (active === "itt" && lowerName.endsWith(".itt")) {
-        ittFiles.push(file);
       } else if (
         active === "subidx" &&
         (lowerName.endsWith(".idx") || lowerName.endsWith(".sub"))
@@ -629,23 +583,12 @@ export function SubtitleWorkbench() {
         sourcePath: (group.idx as File & { path?: string }).path,
         files: [group.idx, group.sub].filter((file): file is File => !!file),
       }));
-    const ittItems: BatchItem[] = ittFiles.map((file, index) => ({
-      id: `${file.name}-itt-${index}-${file.size}`,
-      kind: "itt",
-      name: baseName(file.name),
-      previews: [],
-      selected: true,
-      sourcePath: (file as File & { path?: string }).path,
-      files: [file],
-    }));
-    const items = [...supItems, ...subIdxItems, ...ittItems].sort((left, right) =>
+    const items = [...supItems, ...subIdxItems].sort((left, right) =>
       left.name.localeCompare(right.name),
     );
     if (!items.length) {
       setBridgeError(
-        active === "itt"
-          ? "Drop one or more .itt files, or select them with Browse."
-          : active === "subidx"
+        active === "subidx"
           ? "Drop matching .sub and .idx files, or select both files with Browse."
           : "Drop one or more .sup files, or select them with Browse.",
       );
@@ -677,7 +620,7 @@ export function SubtitleWorkbench() {
    * picked items simply have none.
    */
   function loadSubtitlePaths(paths: string[]) {
-    const wanted = active === "subidx" ? /\.idx$/iu : active === "itt" ? /\.itt$/iu : /\.sup$/iu;
+    const wanted = active === "subidx" ? /\.idx$/iu : /\.sup$/iu;
     // For SUB/IDX the .idx is the input; a picked .sub only tells us the user
     // grabbed the pair, and the converter finds it beside the .idx anyway.
     const inputs = paths.filter((path) => wanted.test(path));
@@ -702,8 +645,7 @@ export function SubtitleWorkbench() {
   }
 
   async function handleBatchBrowse() {
-    const extensions =
-      active === "subidx" ? ["idx", "sub"] : active === "itt" ? ["itt"] : ["sup"];
+    const extensions = active === "subidx" ? ["idx", "sub"] : ["sup"];
     try {
       const picked = await pickBridgeFiles(extensions);
       // Cancelled dialog: leave everything exactly as it was.
@@ -745,7 +687,6 @@ export function SubtitleWorkbench() {
 
   function resetExtract() {
     runToken.current += 1;
-    setExtractVideoFile(null);
     setExtractVideoName("");
     setExtractVideoPath("");
     setExtractTracks([]);
@@ -800,10 +741,6 @@ export function SubtitleWorkbench() {
   async function startBatch() {
     if (ocrRunStatus === "running") return;
     if (isOcrTool && !selectedBatchLanguages.length) return;
-    if (isIttTool && (!activeBatchItems.length || !validSelectedFps)) {
-      setBridgeError("Choose a valid source FPS before converting ITT files.");
-      return;
-    }
     runToken.current += 1;
     const token = runToken.current;
     const isCurrentRun = () => runToken.current === token;
@@ -814,9 +751,7 @@ export function SubtitleWorkbench() {
     setCompletedSrtFiles([]);
     setBridgeError("");
 
-    const runnableBatchItems = isIttTool
-      ? activeBatchItems
-      : activeBatchItems.filter(
+    const runnableBatchItems = activeBatchItems.filter(
           (item) => item.language && selectedBatchLanguages.includes(item.language),
         );
     let bridgeItems = runnableBatchItems.filter((item) => item.sourcePath);
@@ -876,12 +811,8 @@ export function SubtitleWorkbench() {
 
       const outputs: string[] = [];
       const groups = new Map<string, BatchItem[]>();
-      if (isIttTool) {
-        groups.set("itt", bridgeItems);
-      } else {
-        for (const item of bridgeItems) {
-          groups.set(item.language ?? "eng", [...(groups.get(item.language ?? "eng") ?? []), item]);
-        }
+      for (const item of bridgeItems) {
+        groups.set(item.language ?? "eng", [...(groups.get(item.language ?? "eng") ?? []), item]);
       }
       // Progress is per file, from the CLI's own job-finished events. It used
       // to be per language group, so a 40-file single-language batch sat at 0%
@@ -893,11 +824,10 @@ export function SubtitleWorkbench() {
       for (const [language, items] of groups) {
         await runBridgeJob(
           {
-            command: isIttTool ? "itt-to-srt" : active === "subidx" ? "subidx-to-srt" : "sup-to-srt",
+            command: active === "subidx" ? "subidx-to-srt" : "sup-to-srt",
             inputs: items.flatMap((item) => item.sourcePath ?? []),
-            language: isIttTool ? undefined : language,
-            fps: isIttTool ? selectedFps : undefined,
-            jobs: isIttTool ? undefined : jobs,
+            language,
+            jobs,
             ocrEngine: "auto",
           },
           (event) => {
@@ -1345,7 +1275,7 @@ export function SubtitleWorkbench() {
                       type="button"
                       onClick={() => setQueueStep(step)}
                     >
-	                      {isIttTool ? textQueueStepLabels[step] : label}
+	                      {label}
                       {step === "review" && activeBatchItems.length ? (
                         <span className="tab-badge">{activeBatchItems.length}</span>
                       ) : null}
@@ -1392,7 +1322,7 @@ export function SubtitleWorkbench() {
                       />
                       <span>{subtitleToolEmptyLabel}</span>
 	                      <small>
-		                        or drop {active === "itt" ? "ITT files" : active === "subidx" ? "SUB/IDX files" : "SUP files"} here
+		                        or drop {active === "subidx" ? "SUB/IDX files" : "SUP files"} here
 	                      </small>
 	                    </div>
 	                    {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
@@ -1420,10 +1350,6 @@ export function SubtitleWorkbench() {
 	                      <p className="review-guidance">
 	                        {unresolvedBatchItems.length} job(s) still need a
 	                        language. Use Assign language on each row.
-	                      </p>
-	                    ) : isIttTool && activeBatchItems.length ? (
-	                      <p className="review-guidance">
-	                        {activeBatchItems.length} ITT job(s) ready to convert.
 	                      </p>
 	                    ) : null}
 	                    {isOcrTool && currentBatchItem ? (
@@ -1527,13 +1453,9 @@ export function SubtitleWorkbench() {
                           >
                             <strong>{item.name}</strong>
 	                            <span>
-	                              {isIttTool
-	                                ? "1 text subtitle file"
-	                                : item.language
-	                                  ? "1 stream"
-	                                  : "1 stream without language"}
+	                              {item.language ? "1 stream" : "1 stream without language"}
 	                            </span>
-	                            {!isIttTool && item.language ? (
+	                            {item.language ? (
 	                              <small>{languageName(item.language)}</small>
 	                            ) : null}
 	                            <div className="queue-item-actions">
@@ -1578,40 +1500,9 @@ export function SubtitleWorkbench() {
 	                {queueStep === "run" ? (
 	                  <div className="batch-start-panel">
 	                    <p>
-	                      {isIttTool
-	                        ? "Choose the source frame rate for this queue. SRT actions appear once conversion has finished."
-	                        : "Choose which OCR languages should run for this queue. SRT actions appear once OCR has finished."}
+	                      Choose which OCR languages should run for this queue.
+	                      SRT actions appear once OCR has finished.
 	                    </p>
-	                    {isIttTool ? (
-	                      <div className="start-language-list">
-	                        <h2>Frame rate</h2>
-	                        <label className="field-stack">
-	                          <span>Source FPS</span>
-	                          <select
-	                            value={fpsPreset}
-	                            onChange={(event) => setFpsPreset(event.target.value)}
-	                          >
-	                            {fpsOptions.map(([value, label]) => (
-	                              <option key={value} value={value}>
-	                                {label}
-	                              </option>
-	                            ))}
-	                          </select>
-	                        </label>
-	                        {fpsPreset === "other" ? (
-	                          <label className="field-stack">
-	                            <span>Custom FPS</span>
-	                            <input
-	                              placeholder="24000/1001"
-	                              value={customFps}
-	                              onChange={(event) => setCustomFps(event.target.value)}
-	                            />
-	                          </label>
-	                        ) : null}
-	                        <p className="small-note">Using {selectedFps || "custom"} fps.</p>
-	                      </div>
-	                    ) : (
-		                  <>
 		                    <div className="start-language-list">
 		                      <h2>Languages</h2>
 		                      {batchLanguages.length ? (
@@ -1649,16 +1540,12 @@ export function SubtitleWorkbench() {
 		                        onChange={(event) => setJobs(Number(event.target.value))}
 		                      />
 		                    </label>
-		                  </>
-	                    )}
 		                    <div className="start-batch-box">
 	                      <h2>
 	                        {ocrRunStatus === "complete"
 	                          ? "SRT files ready"
 	                          : ocrRunStatus === "running"
-	                            ? isIttTool
-	                              ? "Converting ITT"
-	                              : "Running OCR"
+	                            ? "Running OCR"
 	                            : "Ready to run"}
 	                      </h2>
                       {ocrRunStatus === "running" ? (
@@ -1667,7 +1554,7 @@ export function SubtitleWorkbench() {
 	                          <div
                             className="progress-meter"
                             role="progressbar"
-                            aria-label={isIttTool ? "Conversion progress" : "OCR progress"}
+                            aria-label="OCR progress"
                             aria-valuenow={ocrProgress}
                             aria-valuemin={0}
                             aria-valuemax={100}
@@ -1694,18 +1581,6 @@ export function SubtitleWorkbench() {
                             </button>
                           </div>
                         </>
-	                      ) : isIttTool ? (
-	                        <>
-	                          {/* A failed run returns to idle with the queue intact, so the
-	                              reason has to be visible here as well as mid-run. */}
-	                          {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
-	                          {validSelectedFps ? null : (
-	                            <p>Choose a valid source FPS before converting.</p>
-	                          )}
-	                          <button disabled={!validSelectedFps} type="button" onClick={startBatch}>
-	                            {bridgeError ? "Try conversion again" : "Run conversion"}
-	                          </button>
-	                        </>
 	                      ) : selectedBatchLanguages.length ? (
 	                        <>
 	                          {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
@@ -1728,20 +1603,11 @@ export function SubtitleWorkbench() {
 	                <article className="about-copy">
 	                  <h2>Queue-driven conversion</h2>
 	                  <p>
-	                    {isIttTool
-	                      ? "A single ITT file and a larger set follow the same path: add files, review jobs, choose the source frame rate, then convert."
-	                      : "A single subtitle item and a larger set follow the same path: add files, review jobs, assign languages, then run OCR."}
+	                    A single subtitle item and a larger set follow the same
+	                    path: add files, review jobs, assign languages, then run
+	                    OCR.
 	                  </p>
-	                  {isIttTool ? (
-	                    <>
-	                      <h2>Frame-based timing</h2>
-	                      <p>
-	                        ITT files can use frame numbers in their timestamps.
-	                        Pick the source frame rate so those cues land at the
-	                        right SRT times.
-	                      </p>
-	                    </>
-	                  ) : active === "subidx" ? (
+	                  {active === "subidx" ? (
 	                    <>
                       <h2>SUB/IDX pairing</h2>
                       <p>

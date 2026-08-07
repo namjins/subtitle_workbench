@@ -8,7 +8,6 @@ your machine.
 | --- | --- | --- |
 | **SUP to SRT** | `.sup` | OCR for Blu-ray PGS subtitle tracks |
 | **SUB/IDX to SRT** | `.sub` + `.idx` | OCR for DVD VobSub subtitle pairs |
-| **ITT to SRT** | `.itt` | Final Cut Pro / TTML timed text, frame-rate aware |
 | **Extract from Video** | `.mkv` | Pull embedded subtitle tracks out of a video |
 
 Use it as a desktop-style app in your browser, or as a CLI for batch and
@@ -89,16 +88,6 @@ npm run cli -- sup-to-srt *.sup --lang eng --out-dir ./srt
 ```bash
 npm run cli -- subidx-to-srt movie.idx --lang eng
 ```
-
-**Final Cut Pro timed text**
-
-```bash
-npm run cli -- itt-to-srt captions.itt --fps 24000/1001
-```
-
-Frame rate matters for `.itt` files using frame timecodes. The file's own
-`ttp:frameRate` is used when present; `--fps` covers the rest and accepts
-decimals (`25`) or fractions (`24000/1001`).
 
 **Extract subtitles from video files**
 

@@ -1,8 +1,7 @@
 type BridgeJob = {
-  command: "sup-to-srt" | "subidx-to-srt" | "itt-to-srt";
+  command: "sup-to-srt" | "subidx-to-srt";
   inputs: string[];
   language?: string;
-  fps?: string;
   outDir?: string;
   jobs?: number;
   ocrEngine?: string;

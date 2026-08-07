@@ -45,30 +45,6 @@ test("uses automatic safe jobs when local runner jobs are omitted", () => {
   assert.equal(args[jobsIndex + 1], String(detectSafeJobs()));
 });
 
-test("builds ITT conversion args without OCR-only options", () => {
-  const args = subtitleWorkbenchArgs({
-    command: "itt-to-srt",
-    inputs: ["/tmp/captions.itt"],
-    fps: "24000/1001",
-    outDir: "/tmp/out",
-    jobs: 8,
-    language: "eng",
-  });
-
-  assert.deepEqual(args.slice(1), [
-    "itt-to-srt",
-    "--fps",
-    "24000/1001",
-    "--json-events",
-    "--out-dir",
-    "/tmp/out",
-    "--",
-    "/tmp/captions.itt",
-  ]);
-  assert.equal(args.includes("--lang"), false);
-  assert.equal(args.includes("--jobs"), false);
-  assert.equal(args.includes("--ocr-engine"), false);
-});
 
 test("streams JSONL local job events from stdout", async () => {
   const seen = [];

@@ -21,7 +21,6 @@ test("validates local bridge job requests", () => {
       inputs: ["/tmp/movie.sup"],
       language: "eng",
       outDir: undefined,
-      fps: undefined,
       jobs: 4,
       ocrEngine: "auto",
     },
@@ -30,22 +29,12 @@ test("validates local bridge job requests", () => {
   assert.throws(() => validateJob({ command: "sup-to-srt", inputs: [] }), /At least one/u);
 });
 
-test("validates ITT bridge jobs with FPS", () => {
-  assert.deepEqual(
-    validateJob({
-      command: "itt-to-srt",
-      inputs: ["/tmp/captions.itt"],
-      fps: "24000/1001",
-    }),
-    {
-      command: "itt-to-srt",
-      inputs: ["/tmp/captions.itt"],
-      language: "eng",
-      fps: "24000/1001",
-      outDir: undefined,
-      jobs: detectSafeJobs(),
-      ocrEngine: "auto",
-    },
+test("refuses the removed ITT command", () => {
+  // itt-to-srt was removed as a product surface; a stale client or replayed
+  // request must not resurrect it.
+  assert.throws(
+    () => validateJob({ command: "itt-to-srt", inputs: ["/tmp/captions.itt"] }),
+    /Unsupported/u,
   );
 });
 
