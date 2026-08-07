@@ -75,7 +75,7 @@ const tools: Array<{
 }> = [
   {
     id: "sup",
-    label: "Sup to Srt",
+    label: "SUP to SRT",
     eyebrow: "OCR",
     detail: "PGS subtitle image tracks",
   },
@@ -285,6 +285,7 @@ export function SubtitleWorkbench() {
   // into the new tool's panel.
   const runToken = useRef(0);
   const batchFileInputRef = useRef<HTMLInputElement | null>(null);
+  const extractFileInputRef = useRef<HTMLInputElement | null>(null);
   const [applyLanguageToBatch, setApplyLanguageToBatch] = useState(false);
   const [selectedBatchLanguages, setSelectedBatchLanguages] = useState<string[]>([]);
   const [ocrRunStatus, setOcrRunStatus] = useState<OcrRunStatus>("idle");
@@ -400,7 +401,7 @@ export function SubtitleWorkbench() {
     setBridgeError("");
   }
 
-  async function chooseExtractVideoPath() {
+  async function handleExtractBrowse() {
     setBridgeError("");
     try {
       const picked = await pickBridgeFile(["mkv"]);
@@ -414,12 +415,10 @@ export function SubtitleWorkbench() {
       setExtractStage("intake");
       setShowSrtFiles(false);
       setCompletedExtractFiles([]);
-    } catch (error) {
-      setBridgeError(
-        error instanceof Error
-          ? `${error.message}. Paste the local MKV path instead.`
-          : "Native file picking is unavailable. Paste the local MKV path instead.",
-      );
+    } catch {
+      // No native picker (non-macOS web bridge): the webview file input at
+      // least captures the name, and its handler asks for the path.
+      extractFileInputRef.current?.click();
     }
   }
 
@@ -1069,13 +1068,18 @@ export function SubtitleWorkbench() {
                       onDragLeave={() => setDragTarget(null)}
                       onDrop={handleExtractDrop}
                     >
-                      <label className="browse-button" htmlFor="extract-video">
+                      <button
+                        className="browse-button"
+                        type="button"
+                        onClick={handleExtractBrowse}
+                      >
                         Browse...
-                      </label>
+                      </button>
                       <input
                         accept=".mkv"
                         id="extract-video"
                         onChange={handleExtractVideo}
+                        ref={extractFileInputRef}
                         type="file"
                       />
                       <span>{extractVideoName || "No file selected."}</span>
@@ -1094,9 +1098,6 @@ export function SubtitleWorkbench() {
 	                          type="text"
 	                          value={extractVideoPath}
 	                        />
-	                        <button type="button" onClick={chooseExtractVideoPath}>
-	                          Browse local file
-	                        </button>
 	                      </div>
 	                    </label>
 		                    {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
