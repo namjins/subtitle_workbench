@@ -8,8 +8,21 @@ plus CLI commands for automation and batch subtitle work. See
 
 ## Current Features
 
-- `Extract from Video` workspace for the included MKV batch extractor.
-- Local OCR helper for `SUP to SRT` and `SUB/IDX to SRT`.
+- `SUP to SRT` — OCR for Blu-ray PGS subtitle tracks.
+- `SUB/IDX to SRT` — OCR for DVD VobSub subtitle pairs.
+- `ITT to SRT` — Final Cut Pro / TTML timed text, with frame-rate handling.
+- `Extract from Video` — pull embedded subtitle tracks out of MKV files.
+
+Run the app with:
+
+```bash
+npm run app
+```
+
+That builds the UI and serves it from the local bridge on
+`http://127.0.0.1:8765`. The bridge is what does the work; the page is a
+client for it, and both live on the same origin so no cross-origin access is
+involved.
 
 ## Requirements
 
@@ -17,7 +30,7 @@ plus CLI commands for automation and batch subtitle work. See
 - For MKV subtitle extraction:
   - `mkvinfo`
   - `mkvextract`
-- For the planned OCR backend:
+- For OCR:
   - `ffmpeg`
   - `ffprobe`
   - `tesseract`
@@ -99,32 +112,28 @@ to override when you want a different concurrency level.
 `peek-sup` extracts a few readable subtitle images from a PGS `.sup` file so the
 operator can confirm the OCR language before running the full conversion.
 
-## Extract English SUP Tracks From MKV Files
-
-The extraction script is based on the existing workflow in
-`/Volumes/Misc. Storage/Tools/extract_english_subs.sh`.
+## Extract Subtitle Tracks From MKV Files
 
 From a folder containing `.mkv` files:
 
 ```bash
-/path/to/repos/subtitle_workbench/tools/extract_english_subs.sh
+npm run cli -- extract-english /path/to/videos
+npm run cli -- extract-english /path/to/videos --languages eng,spa
+npm run cli -- extract-english /path/to/videos --all-languages --jobs auto
 ```
 
-Or from the project root:
+The command:
 
-```bash
-cd /path/to/videos
-JOBS=auto /path/to/repos/subtitle_workbench/tools/extract_english_subs.sh
-```
-
-The script:
-
-- scans only the current directory;
-- extracts English subtitle tracks;
-- writes `movie.sup`, `movie1.sup`, `movie2.sup`, and so on;
+- scans only the top level of the given directory;
+- writes `movie.sub` + `movie.idx` for DVD VobSub tracks and `movie.sup` for
+  Blu-ray PGS tracks, with `movie1.*` and so on for additional tracks;
+- suffixes non-English and forced tracks, e.g. `movie-spa.sup`,
+  `movie1-forced.idx`;
 - skips outputs that already exist;
-- runs files in parallel with `JOBS=auto` by default, or `JOBS=N` when
-  overridden.
+- exits non-zero if any file failed.
+
+DVB subtitles (`S_DVBSUB`) are not supported and are skipped rather than
+written to a file the OCR path cannot read.
 
 ## Convert Image Subtitles With OCR
 
@@ -219,25 +228,34 @@ fixture target is:
 - `0` end-time mismatches
 - character error rate at or below `1%`
 
-For the checked benchmark output in `.tmp/ocr-examples-accurate`, run:
+`npm run ocr:gate` runs the full SUP comparison. It needs the local fixture
+media in `Subtitle Examples/` and previously generated candidates in
+`.tmp/ocr-examples-accurate/`; neither is tracked, because they are large and
+disc-derived. The gate fails rather than passing silently when those are
+missing, empty, or fewer than `--min-fixtures`.
 
-```bash
-npm run ocr:gate
-```
+The committed fixtures in `tests/fixtures/` are what CI runs against.
 
-## Next Backend Step
+## Local Bridge
 
-The browser workbench now models the local workflows, and the CLI can emit JSONL
-job events with `--json-events`. `lib/local-runner.mjs` can spawn the CLI and
-parse those events. The next implementation pass should add the app-specific
-local route or desktop command that calls the runner and streams real progress
-and output paths into the UI.
-
-For local development, the bridge server can be started separately:
+`npm run app` builds the UI and serves it from the bridge. To run the bridge
+alone:
 
 ```bash
 npm run bridge
+npm run cli -- ui --port 8765        # serve the built UI and open a browser
+npm run cli -- ui --dev              # also accept the Vite dev server origin
 ```
 
-It listens on `127.0.0.1:8765` by default and exposes `POST /uploads` for
-browser-selected files plus `POST /jobs` as a Server-Sent Events stream.
+It listens on `127.0.0.1:8765` and exposes `GET /health`, `POST /jobs` (a
+Server-Sent Events stream), `POST /uploads`, `POST /files/pick`,
+`POST /videos/inspect` and `POST /videos/extract`.
+
+Every endpoint requires a loopback `Host`, a same-origin `Origin` when one is
+sent, and a per-session token that the bridge injects into the page it serves.
+A page it did not serve cannot read that token, which is what stops an
+unrelated website from driving your local install. `--dev` relaxes this for the
+Vite dev origin and is off by default.
+
+`--ocr-command` is deliberately not accepted over HTTP, since it names a binary
+to execute. Use the CLI flag or `SUBTITLE_WORKBENCH_OCR_COMMAND`.
