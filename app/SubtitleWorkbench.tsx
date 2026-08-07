@@ -942,7 +942,7 @@ export function SubtitleWorkbench() {
                     </p>
                   </div>
 
-                  <div className="batch-tabs" role="tablist" aria-label="Extract steps">
+                  <ol className="batch-tabs" aria-label="Extract steps">
                     {queueSteps.map(([step, label], index) => (
                       <button
                         className={extractStepClass(index)}
@@ -953,7 +953,7 @@ export function SubtitleWorkbench() {
                         {extractQueueStepLabels[step] ?? label}
                       </button>
                     ))}
-                  </div>
+                  </ol>
 
                   <div className="native-form">
                     <label className="native-label" htmlFor="extract-video">
@@ -1060,7 +1060,7 @@ export function SubtitleWorkbench() {
 		                        : "Run extraction, then review the files created from the selected tracks."}
 		                    </p>
 		                  </div>
-		                  <div className="batch-tabs" role="tablist" aria-label="Extract steps">
+		                  <ol className="batch-tabs" aria-label="Extract steps">
 		                    {queueSteps.map(([step, label], index) => (
 		                      <button
 		                        className={extractStepClass(index)}
@@ -1074,7 +1074,7 @@ export function SubtitleWorkbench() {
 		                        ) : null}
 		                      </button>
 		                    ))}
-		                  </div>
+		                  </ol>
 		                  <p className="file-name-row">File name: {extractVideoName}</p>
 		
 		                  {extractStage === "review" ? (
@@ -1266,7 +1266,7 @@ export function SubtitleWorkbench() {
                   <p>{subtitleToolDescription}</p>
                 </div>
 
-                <div className="batch-tabs" role="tablist" aria-label="Queue steps">
+                <ol className="batch-tabs" aria-label="Queue steps">
                   {queueSteps.map(([step, label], index) => (
                     <button
                       className={queueStepClass(index)}
@@ -1280,7 +1280,7 @@ export function SubtitleWorkbench() {
                       ) : null}
                     </button>
                   ))}
-                </div>
+                </ol>
 
                 {queueStep === "intake" ? (
                   <div className="batch-upload-panel">
@@ -1588,7 +1588,14 @@ export function SubtitleWorkbench() {
                       {ocrRunStatus === "running" ? (
                         <div className="ocr-progress-panel">
                           {bridgeError ? <p>{bridgeError}</p> : null}
-	                          <div className="progress-meter" aria-label={isIttTool ? "Conversion progress" : "OCR progress"}>
+	                          <div
+                            className="progress-meter"
+                            role="progressbar"
+                            aria-label={isIttTool ? "Conversion progress" : "OCR progress"}
+                            aria-valuenow={ocrProgress}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                          >
                             <span style={{ width: `${ocrProgress}%` }} />
                           </div>
                           <p>

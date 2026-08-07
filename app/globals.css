@@ -105,7 +105,7 @@ h2 {
 
 .tool-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -170,12 +170,6 @@ h2 {
   padding: 24px;
 }
 
-.pane-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
 
 .fps-control,
 .field-stack {
@@ -324,13 +318,7 @@ h2 {
   font-weight: 700;
 }
 
-.compact-command {
-  grid-template-columns: minmax(0, 1fr) 76px;
-}
 
-.compact-command pre {
-  min-height: auto;
-}
 
 .about-copy {
   display: grid;
@@ -564,15 +552,6 @@ h2 {
   font-weight: 700;
 }
 
-.batch-files-panel .pane-head button {
-  border: 1px solid #3b82f6;
-  border-radius: 5px;
-  background: #3b82f6;
-  color: #fff;
-  padding: 10px 14px;
-  cursor: pointer;
-  font-weight: 700;
-}
 
 .batch-file-list {
   display: grid;
@@ -746,42 +725,9 @@ h2 {
   font-size: 0.9rem;
 }
 
-.command-box button {
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  padding: 9px 13px;
-  font-weight: 800;
-  text-decoration: none;
-}
 
-.command-box {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: stretch;
-}
 
-.command-box pre {
-  min-height: 120px;
-  overflow: auto;
-  margin: 0;
-  border: 1px solid #22261f;
-  border-radius: 8px;
-  background: #171a16;
-  color: #f1f6ea;
-  padding: 16px;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 0.9rem;
-  line-height: 1.55;
-  white-space: pre-wrap;
-}
 
-.command-box button {
-  min-width: 86px;
-  cursor: pointer;
-}
 
 .plain-copy {
   max-width: 580px;
@@ -817,15 +763,6 @@ h2 {
   font-size: clamp(1.8rem, 2.6vw, 2.8rem);
 }
 
-.notice-box {
-  border: 1px solid #79aefc;
-  border-radius: 5px;
-  background: #eef6ff;
-  color: #1c3357;
-  padding: 12px 14px;
-  font-size: 0.92rem;
-  line-height: 1.45;
-}
 
 .language-picker-panel {
   display: grid;
@@ -961,24 +898,7 @@ h2 {
   cursor: not-allowed;
 }
 
-.extracting-status {
-  position: relative;
-  padding-left: 18px;
-}
 
-.extracting-status::before {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  width: 11px;
-  height: 11px;
-  margin-top: -6px;
-  border: 2px solid #9aa4b2;
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 800ms linear infinite;
-  content: "";
-}
 
 @keyframes spin {
   to {
@@ -988,10 +908,6 @@ h2 {
 
 @media (max-width: 960px) {
   .topbar,
-  .pane-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
 
   .tool-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1017,9 +933,6 @@ h2 {
     padding: 18px;
   }
 
-  .command-box {
-    grid-template-columns: 1fr;
-  }
 
   .native-file-box {
     align-items: flex-start;
@@ -1048,5 +961,38 @@ h2 {
   .extract-track-actions {
     justify-self: start;
     justify-content: flex-start;
+  }
+}
+
+/* Keyboard focus. The file inputs are visually hidden but remain in the tab
+   order, so their focus has to be shown on the label that stands in for them —
+   otherwise a keyboard user cannot tell what is selected. */
+:where(button, a, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.native-file-box input:focus-visible + .browse-button,
+.native-file-box input:focus-visible ~ .browse-button {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Ordered list markup for the step indicators; they were divs claiming to be
+   tablists without any tab behaviour. */
+ol.batch-tabs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
