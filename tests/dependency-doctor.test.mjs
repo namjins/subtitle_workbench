@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolveImageMagickCommand } from "../lib/platform-paths.mjs";
 import {
   formatDoctorReport,
   installInstructionsForPlatform,
@@ -157,4 +158,19 @@ test("formats a readable doctor report", () => {
   );
   assert.match(output, /Language data "eng" is not installed/);
   assert.match(output, /brew install node ffmpeg tesseract imagemagick mkvtoolnix/);
+});
+
+test("the pipeline's ImageMagick fallback carries the same Windows guard", () => {
+  // Same trap runBinaryCheck guards against: System32's convert.exe is a
+  // disk utility, and accepting it passes preflight then fails
+  // mid-conversion. Found by fixing doctor and forgetting the pipeline.
+  const lookup = (name) => name === "convert";
+
+  assert.equal(resolveImageMagickCommand({ platform: "win32", lookup }), null);
+  assert.equal(resolveImageMagickCommand({ platform: "darwin", lookup }), "convert");
+  assert.equal(resolveImageMagickCommand({ platform: "linux", lookup }), "convert");
+  assert.equal(
+    resolveImageMagickCommand({ platform: "win32", lookup: (name) => name === "magick" }),
+    "magick",
+  );
 });
