@@ -43,7 +43,12 @@ node --version
 
 ### Step 2 — the media tools
 
-These do the heavy lifting (video reading, image work, text recognition):
+These do the heavy lifting (video reading, image work, text recognition).
+
+**Install Tesseract 5.5 or newer.** 5.4 recognises some low-contrast,
+drop-shadowed subtitle frames as empty, and an empty result drops the cue
+entirely — so the failure is a missing subtitle rather than a visibly wrong
+one. `doctor` warns if it finds an older build.
 
 - **macOS**:
 
@@ -61,7 +66,7 @@ These do the heavy lifting (video reading, image work, text recognition):
 - **Windows**:
 
   ```powershell
-  winget install Gyan.FFmpeg UB-Mannheim.TesseractOCR ImageMagick.ImageMagick MoritzBunkus.MKVToolNix
+  winget install Gyan.FFmpeg tesseract-ocr.tesseract ImageMagick.ImageMagick MoritzBunkus.MKVToolNix
   ```
 
   **Windows only:** close the terminal completely and open a new one
@@ -76,6 +81,11 @@ These do the heavy lifting (video reading, image work, text recognition):
   Environment Variables**, edit your user `Path` variable, and add
   `C:\Program Files\Tesseract-OCR` and `C:\Program Files\MKVToolNix`. Then
   open a new terminal again.
+
+  **Windows only:** the widely-recommended `UB-Mannheim.TesseractOCR`
+  package is *not* what to install here — it stops at 5.4.0, which is below
+  the version floor above. `tesseract-ocr.tesseract` is the upstream
+  project's own package and tracks 5.5.
 
 ### Step 3 — Subtitle Workbench
 

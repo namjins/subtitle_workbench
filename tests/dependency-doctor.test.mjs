@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   formatDoctorReport,
   installInstructionsForPlatform,
+  isBelowMinimumVersion,
+  parseVersionTriple,
   runBinaryCheck,
   summarizeDoctorReport,
 } from "../lib/dependency-doctor.mjs";
@@ -29,6 +31,57 @@ test("never tries the `convert` alternate on Windows", () => {
 
   const macResult = runBinaryCheck(check, { platform: "darwin", lookup });
   assert.equal(macResult.path, "C:\\Windows\\System32\\convert.exe");
+});
+
+test("warns about a Tesseract older than the version floor", () => {
+  // Measured on Windows: 5.4.0 recognises three low-contrast drop-shadowed
+  // frames as empty, and an empty recognition drops the cue outright -- 6 cues
+  // lost across the SUP corpus. 5.5.3 reads them, matching the macOS baseline.
+  assert.deepEqual(parseVersionTriple("tesseract v5.5.3.20260724"), [5, 5, 3]);
+  assert.deepEqual(parseVersionTriple("tesseract v5.4.0.20240606"), [5, 4, 0]);
+  assert.equal(parseVersionTriple("no digits here"), null);
+
+  assert.equal(isBelowMinimumVersion("tesseract v5.4.0.20240606", "5.5.0"), true);
+  assert.equal(isBelowMinimumVersion("tesseract v5.5.0.20241111", "5.5.0"), false);
+  assert.equal(isBelowMinimumVersion("tesseract v5.5.3.20260724", "5.5.0"), false);
+  assert.equal(isBelowMinimumVersion("tesseract v6.0.0", "5.5.0"), false);
+  assert.equal(isBelowMinimumVersion("tesseract v4.1.1", "5.5.0"), true);
+  // An unrecognised banner must never claim the tool is too old.
+  assert.equal(isBelowMinimumVersion("tesseract (unknown build)", "5.5.0"), false);
+  assert.equal(isBelowMinimumVersion(null, "5.5.0"), false);
+});
+
+test("an out-of-date tool warns without making the install unready", () => {
+  const report = {
+    binaries: [
+      { name: "tesseract", ok: true, required: true, warning: "Older than 5.5.0; ..." },
+    ],
+    languages: [],
+  };
+  const summary = summarizeDoctorReport(report);
+  // Lossier, not broken: the conversion still runs.
+  assert.equal(summary.ready, true);
+  assert.equal(summary.warnings.length, 1);
+
+  const output = formatDoctorReport({
+    platform: "win32",
+    arch: "x64",
+    binaries: [
+      {
+        name: "tesseract",
+        ok: true,
+        path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+        version: "tesseract v5.4.0.20240606",
+        warning: "Older than 5.5.0; some subtitle frames are recognised as empty.",
+      },
+    ],
+    languages: [],
+    install: installInstructionsForPlatform("win32"),
+    summary: { ready: true, warnings: [{ name: "tesseract" }] },
+  });
+  assert.match(output, /OLD\s+tesseract/u);
+  assert.match(output, /recognised as empty/u);
+  assert.match(output, /with warnings above/u);
 });
 
 test("summarizes binary and language failures", () => {
