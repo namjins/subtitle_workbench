@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { parseArgv } from "../lib/cli-args.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
+import { toSrtDocument } from "../lib/subtitle-core.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
 const usage = `
@@ -226,7 +227,7 @@ async function convert(
     const images = limit === null ? extractedImages : extractedImages.slice(0, limit);
 
     if (!images.length) {
-      await writeFile(output, "\uFEFF", "utf8");
+      await writeFile(output, toSrtDocument(""), "utf8");
       process.stderr.write(`Wrote 0 cues to ${output}\n`);
       return;
     }
@@ -299,7 +300,7 @@ async function convert(
       .join("\n\n")
       .concat("\n");
 
-    await writeFile(output, `\uFEFF${srt.replace(/\n/g, "\r\n")}`, "utf8");
+    await writeFile(output, toSrtDocument(srt), "utf8");
     process.stderr.write(`Wrote ${cues.length} cues to ${output}\n`);
   } finally {
     if (keepTemp) {

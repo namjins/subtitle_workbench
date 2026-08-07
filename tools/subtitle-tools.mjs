@@ -9,7 +9,12 @@ import { parseArgv } from "../lib/cli-args.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { formatJobEvent } from "../lib/local-job-events.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
-import { convertToSrt, outputNameFor, parseFps } from "../lib/subtitle-core.mjs";
+import {
+  convertToSrt,
+  outputNameFor,
+  parseFps,
+  toSrtDocument,
+} from "../lib/subtitle-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extractorScript = join(root, "tools", "extract_english_subs.sh");
@@ -211,7 +216,7 @@ async function textToSrt(mode) {
     });
     const source = await readFile(inputPath, "utf8");
     const srt = convertToSrt(source, inputPath, { fps });
-    await writeFile(outputPath, srt, "utf8");
+    await writeFile(outputPath, toSrtDocument(srt), "utf8");
     const durationSeconds = (performance.now() - started) / 1000;
     emitJobEvent("job-finished", {
       mode,
