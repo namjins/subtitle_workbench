@@ -40,6 +40,13 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           choco install -y ffmpeg imagemagick tesseract mkvtoolnix
+          # choco writes these installers' locations to the machine PATH,
+          # which later workflow steps do not inherit. ffmpeg and ImageMagick
+          # get chocolatey shims and are visible anyway; tesseract and
+          # MKVToolNix do not, so without this the OCR end-to-end tests
+          # silently skip and Windows CI proves much less than it appears to.
+          Add-Content $env:GITHUB_PATH 'C:\Program Files\Tesseract-OCR'
+          Add-Content $env:GITHUB_PATH 'C:\Program Files\MKVToolNix'
         shell: pwsh
 
       - run: npm run lint
