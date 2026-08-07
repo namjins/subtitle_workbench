@@ -165,6 +165,22 @@ function normalizeLocalPath(path: string) {
     .replace(/\\([ ()[\]{}&'"!#$;])/gu, "$1");
 }
 
+/**
+ * A failed fetch to the bridge surfaces as a bare "Failed to fetch", which
+ * tells the user nothing. The overwhelmingly common cause is that the bridge
+ * is not running, so say that and how to fix it.
+ */
+export function bridgeFailureMessage(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error ?? "");
+  const unreachable =
+    /failed to fetch|networkerror|load failed|connection refused|fetch failed/iu.test(detail);
+
+  if (unreachable) {
+    return "Could not reach the local bridge. Start it with `npm run app`, then run this again.";
+  }
+  return detail || "The local bridge failed to run this job.";
+}
+
 function detectSafeBrowserJobs() {
   const cores = typeof navigator === "undefined" ? 4 : navigator.hardwareConcurrency;
   return Math.max(1, Math.min(8, Math.floor(cores || 4) - 1 || 1));
@@ -265,12 +281,11 @@ export function SubtitleWorkbench() {
   const batchLanguages = Array.from(
     new Set(activeBatchItems.flatMap((item) => (item.language ? [item.language] : []))),
   );
-  const srtFiles = activeBatchItems
-    .filter((item) => item.language)
-    .map((item) => `${item.name}-${item.language}.srt`);
-  const ittSrtFiles = activeBatchItems.map((item) => `${item.name}.srt`);
-  const predictedSrtFiles = isIttTool ? ittSrtFiles : srtFiles;
-  const visibleSrtFiles = completedSrtFiles.length ? completedSrtFiles : predictedSrtFiles;
+  // Only ever real paths reported by the CLI. There used to be a predicted
+  // list here (`${name}-${language}.srt`) shown when no real output arrived,
+  // which could never match what the CLI actually writes (`<base>.srt`) and
+  // was displayed even when the run had failed outright.
+  const visibleSrtFiles = completedSrtFiles;
   const selectedFps = fpsPreset === "other" ? customFps.trim() : fpsPreset;
   const validSelectedFps = /^\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?$/u.test(selectedFps);
   const currentBatchItem =
@@ -424,16 +439,21 @@ export function SubtitleWorkbench() {
           : { ...track, status: "queued", progress: 0 };
       }),
     );
+    // Held so the catch below can cancel it. Previously this timer was left
+    // running, so a bridge failure that arrived within 500ms reset the rows to
+    // "ready" and then the timer flipped them back to "extracting" at 65%,
+    // wedging the UI with no way forward except clearing the queue.
+    const advanceProgress = window.setTimeout(() => {
+      setExtractTracks((tracks) =>
+        tracks.map((track) =>
+          selectedExtractLanguages.includes(track.languageCode) && track.status !== "complete"
+            ? { ...track, status: "extracting", progress: 65 }
+            : track,
+        ),
+      );
+    }, 500);
+
     try {
-      window.setTimeout(() => {
-        setExtractTracks((tracks) =>
-          tracks.map((track) =>
-            selectedExtractLanguages.includes(track.languageCode) && track.status !== "complete"
-              ? { ...track, status: "extracting", progress: 65 }
-              : track,
-          ),
-        );
-      }, 500);
       const result = await extractBridgeVideo(
         extractVideoPath,
         selectedExtractTracks.map((track): BridgeVideoTrack => ({
@@ -449,6 +469,7 @@ export function SubtitleWorkbench() {
           index: 0,
         })),
       );
+      window.clearTimeout(advanceProgress);
       setCompletedExtractFiles(result.outputs);
       setExtractTracks((tracks) =>
         tracks.map((track) =>
@@ -458,7 +479,9 @@ export function SubtitleWorkbench() {
         ),
       );
     } catch (error) {
-      setBridgeError(error instanceof Error ? error.message : "Video extraction failed.");
+      window.clearTimeout(advanceProgress);
+      setBridgeError(bridgeFailureMessage(error));
+      setCompletedExtractFiles([]);
       setExtractTracks((tracks) =>
         tracks.map((track) =>
           selectedExtractLanguages.includes(track.languageCode)
@@ -701,64 +724,63 @@ export function SubtitleWorkbench() {
             .filter((item): item is BatchItem & { sourcePath: string } => !!item.sourcePath);
         }
       }
-      const canUseBridge = bridgeItems.length === runnableBatchItems.length && runnableBatchItems.length > 0;
-      if (canUseBridge) {
-        const outputs: string[] = [];
-        const groups = new Map<string, BatchItem[]>();
-        if (isIttTool) {
-          groups.set("itt", bridgeItems);
-        } else {
-          for (const item of bridgeItems) {
-            groups.set(item.language ?? "eng", [...(groups.get(item.language ?? "eng") ?? []), item]);
-          }
-        }
-        let finishedGroups = 0;
-        for (const [language, items] of groups) {
-          await runBridgeJob(
-            {
-              command: isIttTool ? "itt-to-srt" : active === "subidx" ? "subidx-to-srt" : "sup-to-srt",
-              inputs: items.flatMap((item) => item.sourcePath ?? []),
-              language: isIttTool ? undefined : language,
-              fps: isIttTool ? selectedFps : undefined,
-              jobs: isIttTool ? undefined : jobs,
-              ocrEngine: "auto",
-            },
-            (event) => {
-              if (event.output && typeof event.output === "string") {
-                outputs.push(event.output);
-                setCompletedSrtFiles([...outputs]);
-              }
-            },
-          );
-          finishedGroups += 1;
-          setOcrProgress(Math.round((finishedGroups / groups.size) * 100));
-        }
-        setOcrEtaSeconds(0);
-        setOcrRunStatus("complete");
-        return;
+      if (!runnableBatchItems.length) {
+        throw new Error("Nothing to run: no queued files matched the selected languages.");
       }
-    } catch (error) {
-      setBridgeError(error instanceof Error ? error.message : "Local bridge failed.");
-      if (isIttTool) {
-        setOcrProgress(0);
-        setOcrRunStatus("idle");
-        return;
+      if (bridgeItems.length !== runnableBatchItems.length) {
+        throw new Error(
+          "Could not resolve a local path for every queued file. Remove and re-add the files, then try again.",
+        );
       }
-    }
 
-    window.setTimeout(() => {
-      setOcrProgress(38);
-      setOcrEtaSeconds(28);
-    }, 800);
-    window.setTimeout(() => {
-      setOcrProgress(72);
-      setOcrEtaSeconds(12);
-    }, 1700);
-    window.setTimeout(() => {
-      setOcrProgress(100);
+      const outputs: string[] = [];
+      const groups = new Map<string, BatchItem[]>();
+      if (isIttTool) {
+        groups.set("itt", bridgeItems);
+      } else {
+        for (const item of bridgeItems) {
+          groups.set(item.language ?? "eng", [...(groups.get(item.language ?? "eng") ?? []), item]);
+        }
+      }
+      let finishedGroups = 0;
+      for (const [language, items] of groups) {
+        await runBridgeJob(
+          {
+            command: isIttTool ? "itt-to-srt" : active === "subidx" ? "subidx-to-srt" : "sup-to-srt",
+            inputs: items.flatMap((item) => item.sourcePath ?? []),
+            language: isIttTool ? undefined : language,
+            fps: isIttTool ? selectedFps : undefined,
+            jobs: isIttTool ? undefined : jobs,
+            ocrEngine: "auto",
+          },
+          (event) => {
+            if (event.output && typeof event.output === "string") {
+              // job-started and job-finished both carry `output`, so the same
+              // file arrived twice and rendered with duplicate React keys.
+              if (!outputs.includes(event.output)) outputs.push(event.output);
+              setCompletedSrtFiles([...outputs]);
+            }
+          },
+        );
+        finishedGroups += 1;
+        setOcrProgress(Math.round((finishedGroups / groups.size) * 100));
+      }
       setOcrEtaSeconds(0);
       setOcrRunStatus("complete");
-    }, 2800);
+    } catch (error) {
+      // Every failure path lands here and stops. There used to be a fallthrough
+      // to a setTimeout chain that ended in `complete` at 100%, so a run that
+      // produced no files at all — including one that never reached the bridge
+      // — was reported as a success.
+      setBridgeError(bridgeFailureMessage(error));
+      setOcrProgress(0);
+      setOcrEtaSeconds(0);
+      setCompletedSrtFiles([]);
+      setShowSrtFiles(false);
+      // Back to idle, not complete: the queue is intact so the run can be
+      // retried once the bridge is reachable.
+      setOcrRunStatus("idle");
+    }
   }
 
   function queueStepClass(stepIndex: number) {
@@ -1508,21 +1530,30 @@ export function SubtitleWorkbench() {
                         </>
 	                      ) : isIttTool ? (
 	                        <>
+	                          {/* A failed run returns to idle with the queue intact, so the
+	                              reason has to be visible here as well as mid-run. */}
+	                          {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
 	                          {validSelectedFps ? null : (
 	                            <p>Choose a valid source FPS before converting.</p>
 	                          )}
 	                          <button disabled={!validSelectedFps} type="button" onClick={startBatch}>
-	                            Run conversion
+	                            {bridgeError ? "Try conversion again" : "Run conversion"}
 	                          </button>
 	                        </>
 	                      ) : selectedBatchLanguages.length ? (
-	                        <button type="button" onClick={startBatch}>
-	                          Run OCR
-                        </button>
+	                        <>
+	                          {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
+	                          <button type="button" onClick={startBatch}>
+	                            {bridgeError ? "Try OCR again" : "Run OCR"}
+	                          </button>
+	                        </>
                       ) : (
-                        <p>
-                          Choose at least one language before running OCR.
-                        </p>
+                        <>
+                          {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
+                          <p>
+                            Choose at least one language before running OCR.
+                          </p>
+                        </>
                       )}
                     </div>
                   </div>

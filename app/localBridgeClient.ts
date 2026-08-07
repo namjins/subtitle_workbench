@@ -82,6 +82,21 @@ export async function runBridgeJob(
   const decoder = new TextDecoder();
   let buffer = "";
 
+  // The server writes HTTP 200 before the job starts, so response.ok says
+  // nothing about whether it succeeded. Failures arrive as SSE events, and
+  // ignoring them is what let a failed run render as a completed one.
+  let failure: string | null = null;
+
+  const handle = (event: BridgeEvent) => {
+    if (event.type === "bridge-error" || event.type === "job-failed") {
+      failure =
+        typeof event.error === "string" && event.error
+          ? event.error
+          : "The local bridge reported a failed job.";
+    }
+    onEvent(event);
+  };
+
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -90,14 +105,16 @@ export async function runBridgeJob(
     buffer = parts.pop() ?? "";
     for (const part of parts) {
       const event = parseSseEvent(part);
-      if (event) onEvent(event);
+      if (event) handle(event);
     }
   }
 
   if (buffer) {
     const event = parseSseEvent(buffer);
-    if (event) onEvent(event);
+    if (event) handle(event);
   }
+
+  if (failure) throw new Error(failure);
 }
 
 export async function uploadBridgeFiles(files: File[]) {
