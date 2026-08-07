@@ -1,20 +1,19 @@
 # Portable OCR: decision document
 
-Written 2026-08-07. Status: **proposed** — nothing here is implemented.
+Written 2026-08-07. Status: **option C done and shipped; A re-scoped to the
+VobSub gap only.**
 
 ## The problem this must solve
 
-Windows and Linux users get materially worse OCR than macOS users, because
-the two failure modes Tesseract has are both currently answered by Apple
-Vision, which does not exist there:
+Windows and Linux users get materially worse OCR than macOS users where
+Tesseract's failure modes are answered only by Apple Vision, which does not
+exist there. Originally that was two cases; the shadowed-SUP one has since
+been solved portably (see option C below), leaving one:
 
 | Case | Tesseract (portable today) | Vision (macOS only) |
 | --- | --- | --- |
 | SUB/IDX, 8-title VobSub set | 91 missing cues, 16.68% CER | 6 missing, 1.83% CER |
-| SUP with shadowed-extrusion font (Stargate) | 3 dropped cues, 15.72% CER | 0 dropped, 2.16% CER |
-
-The per-track probe (`lib/ocr-engine-probe.mjs`) routes these tracks to
-Vision on macOS. Off macOS there is nothing to route to.
+| ~~SUP, shadowed-extrusion font~~ | ~~15.72% CER~~ → **0.07%** via shadow-strip | 2.16% (no longer chosen) |
 
 ## Success bar (set before starting, per the working agreements)
 
@@ -83,17 +82,21 @@ every Windows user for a Python environment (a worse ask than the tesseract
 one), or asks us to build and sign PyInstaller binaries per platform — more
 packaging surface than option A for the same underlying runtime and models.
 
-### C. Shadow-strip preprocessing for Tesseract (complementary experiment)
+### C. Shadow-strip preprocessing for Tesseract (done, shipped 2026-08-07)
 
-Attack the Stargate failure directly: separate the extrusion shadow from the
-glyph before Tesseract sees it (the fill and shadow are close in luminance
-but separable — the palette has distinct entries, and the shadow is a
-uniform offset copy of the glyph). Cheap to try, helps every platform, no new
-dependencies — but it only addresses the shadowed-SUP case, not the VobSub
-gap, and it risks becoming another pile of style-specific tuning. Worth one
-bounded spike using the same success bar, measured with
-`--ocr-engine tesseract-accurate` against the Stargate tracks. It does not
-replace option A.
+Attacked the Stargate failure directly and won. The shadow is a full dark
+offset copy of every glyph, so its ink outweighs the light fill and
+binarisation reads the copy; the `shadow-strip` variant in
+`tesseract-accurate` detects that structure per image (dark/light ink mass
+ratio ≥ 0.85 — shadowed tracks measure 1.2–1.3, outlined fonts 0.5, plain
+~0.1), erases everything below the tonal midpoint and binarises the fill.
+
+Measured with `--ocr-engine tesseract-accurate`: Stargate 15.72% → **0.07%**
+CER (680/694 exact, nothing dropped), Stargate1 9.74% → **0.28%** — both far
+better than Vision's 2.16%/1.13%. Clean corpus unchanged-to-better; full
+45-fixture gate on pure Tesseract: 0 missing, 0 extra, 0.66% CER, identical
+to `auto`. This removes the shadowed-SUP case from this plan entirely and
+demotes option A from "the one that matters" to "the VobSub gap".
 
 ## Corpus prerequisite
 
@@ -106,12 +109,17 @@ adding discs.
 
 ## Sequence
 
-1. Bounded spike of option C (shadow-strip), because it is a day's work and
-   its result changes how urgent A is on the SUP side.
-2. Spike A as recognition-only PP-OCRv6-small behind the engine interface;
-   benchmark against the success bar on macOS first (where references are
-   plentiful), then on a Windows/Linux runner.
-3. Decide packaging (optionalDependencies vs sibling package) only after A
+1. ~~Bounded spike of option C (shadow-strip).~~ Done — see above. It
+   removed the SUP half of the problem and proved the "understand the damage
+   before adding a runtime" order right.
+2. Diagnose the VobSub failure mode the same way before reaching for ONNX:
+   inspect what portable Tesseract actually sees on the worst VobSub titles
+   (Gosford Park, Spy Game). If it is another structural, preprocessing-
+   fixable pattern, fix it there first.
+3. If preprocessing cannot close the VobSub gap: spike A as recognition-only
+   PP-OCRv6-small behind the engine interface, benchmarked against the same
+   success bar (now VobSub-only).
+4. Decide packaging (optionalDependencies vs sibling package) only after A
    clears the bar.
-4. Wire the probe off macOS: Tesseract vs ONNX, same two-signal calibration
+5. Wire the probe off macOS: Tesseract vs ONNX, same two-signal calibration
    method, re-measured bands.
