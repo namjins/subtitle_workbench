@@ -269,6 +269,20 @@ version. It needs a [Rust toolchain](https://rustup.rs):
 npm run app:desktop   # tauri dev: builds the UI, compiles the shell, opens the window
 ```
 
+**Windows only:** Rust alone is not enough. The default toolchain is
+`x86_64-pc-windows-msvc`, which links with Microsoft's linker, so you also
+need the **C++ build tools**:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Installing rustup via `winget` skips the interactive check that would
+otherwise warn you about this. Without the build tools the compile fails
+partway through with a misleading error — in Git Bash, coreutils' `link`
+gets picked up in place of the absent `link.exe` and reports
+`link: extra operand`, which has nothing to do with the real cause.
+
 ## Licence
 
 [PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify, and share for

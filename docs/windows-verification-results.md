@@ -50,13 +50,13 @@ data present, "All required dependencies are available".
 
 | Check | Result |
 | --- | --- |
-| `npm run app:desktop` builds and opens at a sensible size | **Not run** — no Rust toolchain on this machine |
+| `npm run app:desktop` builds and opens at a sensible size | **Blocked** → see F7 |
 | Layout matches macOS | **Not run** |
 | Kill from Task Manager leaves no `node` bridge process | **Not run** |
 | Dialogs work from the desktop window | **Not run** |
 
-This whole section is untested. It needs `rustup` installed; nothing here should
-be assumed working.
+Rust 1.97.1 was installed for this run. The build then failed on a missing C++
+linker (F7); the remaining checks are still unrun.
 
 ## OCR quality
 
@@ -217,9 +217,37 @@ The consequence either way: `npm run ocr:gate` as currently configured
 threshold becomes platform-aware or the preprocessing learns this glyph style.
 Nothing was loosened to make it go green.
 
+### F7 — the desktop shell needs more than Rust on Windows — docs fixed
+
+The README says the Tauri shell "needs a Rust toolchain". On Windows that is not
+sufficient. rustup's default host is `x86_64-pc-windows-msvc`, which links with
+Microsoft's linker, and installing rustup through `winget` skips the interactive
+check that would otherwise warn about it.
+
+With Rust installed and no C++ build tools, `npm run app:desktop` downloads 256
+crates, compiles for a while, and then fails repeatedly with:
+
+```
+error: linking with `link.exe` failed: exit code: 1
+  = note: link: extra operand '...rcgu.o'
+          Try 'link --help' for more information.
+```
+
+That message is a red herring twice over. There is no `link.exe` on the machine
+at all, so in Git Bash the GNU coreutils `link` on `PATH` is picked up instead —
+and *its* usage error is what gets reported. Nothing in the output names the
+actual cause. Confirmed absent: no `vswhere.exe`, no Visual Studio or Build
+Tools installation.
+
+The README now gives the `winget` line for the VCTools workload and explains the
+misleading error. The build was still running when this was written; the desktop
+checklist remains unrun either way.
+
 ## Still open
 
-- Desktop shell section is entirely unrun — needs `rustup`.
-- F5 needs a decision on whether the interop is worth it.
+- Desktop shell checks are unrun. F7 blocked the build; the C++ build tools were
+  installing when this was written.
+- F5 is settled as documented-only: no code change, the reveal still opens
+  behind the browser by design.
 - F6 needs the macOS baseline to confirm the explanation, then a decision on
   what the gate should require on Windows.
