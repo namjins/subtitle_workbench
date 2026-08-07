@@ -1,6 +1,7 @@
 # OCR Engine Evaluation
 
-This note distills the outside OCR suggestions from `Context.md` into choices
+This note distills the outside OCR suggestions in
+`docs/ocr-improvement-brief.md` into choices
 that fit this project: local-first, cross-platform desktop packaging, and a CLI
 that can run unattended.
 

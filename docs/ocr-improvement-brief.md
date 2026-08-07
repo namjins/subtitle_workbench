@@ -1,3 +1,15 @@
+# OCR Improvement Brief
+
+External brief on improving OCR for bitmap subtitle formats, kept as the
+starting point for the portable-recogniser work (see the "portable OCR gap" in
+RUNNING_NOTES). It is a proposal, not a description of this codebase: parts are
+already done (the engine adapter boundary, benchmark tooling, preprocessing
+variants), and parts are deliberately not planned yet.
+
+`docs/ocr-engine-evaluation.md` is the distilled version with decisions applied.
+
+---
+
 We need to improve OCR for bitmap subtitle formats used by this application.
 
 ## Context
