@@ -52,7 +52,7 @@ data present, "All required dependencies are available".
 | --- | --- |
 | `npm run app:desktop` builds and opens at a sensible size | **Pass**, after F7 |
 | Layout matches macOS | **Not run** — needs a side-by-side eye |
-| Kill from Task Manager leaves no `node` bridge process | **Not run** |
+| Kill from Task Manager leaves no `node` bridge process | **Pass** |
 | Dialogs work from the desktop window | **Not run** |
 
 Rust 1.97.1 and the MSVC C++ build tools were installed for this run; the build
@@ -60,7 +60,18 @@ needed both (F7). The window then opened at **1396×969** on a 1920×1080 monito
 (working area 1920×1032) — comfortably inside it, neither cramped nor oversized.
 It spawns the bridge as a child `node.exe` alongside `msedgewebview2.exe`.
 
-The three remaining checks are unrun, not passing.
+The orphan check was run twice, because the two shutdowns are not the same test:
+
+- **Graceful close** (window closed, shell exits 0): bridge `node.exe` gone.
+- **Hard kill** — `Stop-Process -Force`, which is the same `TerminateProcess`
+  that Task Manager's "End task" issues, so no exit handler runs: shell PID 4128
+  killed, bridge PID 20088 **also gone**. Nothing left listening, no orphaned
+  WebView2, no stray `node`.
+
+The hard kill is the one worth having: a bridge that survives it keeps an
+authorized HTTP server on a known port with no window to close.
+
+Layout and the desktop-window dialogs are unrun, not passing.
 
 ## OCR quality
 
@@ -304,9 +315,9 @@ checklist remains unrun either way.
 
 ## Still open
 
-- Three desktop shell checks: layout against macOS, scrollbars per tool, the
-  Task Manager kill leaving no orphaned bridge, and the dialogs from the desktop
-  window. The shell builds and opens; none of these has been run.
+- Two desktop shell checks: layout against macOS (including scrollbars on each
+  tool) and the dialogs from the desktop window. Both need eyes on the running
+  app. The shell builds, opens, and survives the orphan test.
 - F5 is settled as documented-only: no code change, the reveal still opens
   behind the browser by design.
 
