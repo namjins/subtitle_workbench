@@ -1036,11 +1036,12 @@ ol.batch-tabs {
   .extract-start-page,
   .batch-page {
     max-width: none;
-    /* The workflow column flexes and can never collapse; the rail is a
-       fixed-width sidebar. An earlier minmax(0, 760px) left column let one
-       engine shrink the workflow to ~240px while the rail kept its
-       maximum. */
-    grid-template-columns: minmax(0, 1fr) 340px;
+    /* The workflow column caps at a comfortable line length and the rail
+       is a fixed-width sidebar sitting directly beside it, not pinned to
+       the far edge. minmax(0, ...) keeps narrow windows safe; the pinch
+       bug this replaces came from the container itself being capped at
+       760px, which the rules above now lift. */
+    grid-template-columns: minmax(0, 880px) 340px;
     column-gap: 44px;
     /* The rail spans a big row count so it can sit beside any number of
        left-column blocks; with a row-gap, every phantom row it spans would
@@ -1052,7 +1053,6 @@ ol.batch-tabs {
   .extract-start-page > :not(.about-copy),
   .batch-page > :not(.about-copy) {
     grid-column: 1;
-    max-width: 860px;
     margin-bottom: 22px;
   }
 
