@@ -39,14 +39,38 @@ test("the run handler has no simulated progress or success path", async () => {
 
 test("a failed run returns to idle rather than complete", async () => {
   const workbench = await readFile(workbenchUrl, "utf8");
-  const catchBlock = workbench.slice(workbench.indexOf("    } catch (error) {\n      // Every failure path"));
 
-  assert.ok(catchBlock, "expected the startBatch catch block");
-  assert.match(catchBlock, /setOcrRunStatus\("idle"\)/u);
-  assert.match(catchBlock, /setCompletedSrtFiles\(\[\]\)/u);
-  assert.doesNotMatch(
-    catchBlock.slice(0, catchBlock.indexOf("\n  }")),
-    /setOcrRunStatus\("complete"\)/u,
+  const start = workbench.indexOf("async function startBatch()");
+  assert.ok(start > 0, "expected startBatch");
+  const body = workbench.slice(start, workbench.indexOf("\n  }\n", start));
+
+  const failurePath = body.slice(body.lastIndexOf("} catch (error) {"));
+  assert.ok(failurePath.length > 0, "expected a catch block in startBatch");
+
+  // The failure path must reset, not celebrate.
+  assert.match(failurePath, /setOcrRunStatus\("idle"\)/u);
+  assert.match(failurePath, /setCompletedSrtFiles\(\[\]\)/u);
+  assert.doesNotMatch(failurePath, /setOcrRunStatus\("complete"\)/u);
+
+  // Exactly one place may declare the run complete, and it is after the loop.
+  assert.equal(
+    (body.match(/setOcrRunStatus\("complete"\)/gu) ?? []).length,
+    1,
+    "success should be declared in exactly one place",
+  );
+});
+
+test("in-flight runs cannot write into a different tool's panel", async () => {
+  const workbench = await readFile(workbenchUrl, "utf8");
+
+  // Switching tools or clearing invalidates the token, and every async write
+  // checks it, so a job finishing later cannot land on the wrong screen.
+  assert.match(workbench, /const runToken = useRef\(0\)/u);
+  assert.match(workbench, /const isCurrentRun = \(\) => runToken\.current === token/u);
+  assert.match(
+    workbench,
+    /function selectTool\(toolId: ToolId\) \{\s*\n\s*\/\/[^\n]*\n\s*runToken\.current \+= 1;/u,
+    "selectTool must invalidate in-flight runs",
   );
 });
 

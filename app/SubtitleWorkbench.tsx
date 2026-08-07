@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useState } from "react";
+import { ChangeEvent, DragEvent, useRef, useState } from "react";
 import {
   extractBridgeVideo,
   inspectBridgeVideo,
@@ -201,9 +201,18 @@ async function filesFromEntry(entry: WebkitFileEntry): Promise<File[]> {
   }
 
   const reader = entry.createReader();
-  const entries = await new Promise<WebkitFileEntry[]>((resolve) => {
-    reader.readEntries(resolve, () => resolve([]));
-  });
+  // readEntries returns at most 100 entries per call and must be drained until
+  // it yields an empty array. Calling it once silently dropped everything past
+  // the first batch when a folder was dropped.
+  const entries: WebkitFileEntry[] = [];
+  for (;;) {
+    const batch = await new Promise<WebkitFileEntry[]>((resolve) => {
+      reader.readEntries(resolve, () => resolve([]));
+    });
+    if (!batch.length) break;
+    entries.push(...batch);
+  }
+
   const nestedFiles = await Promise.all(entries.map((nestedEntry) => filesFromEntry(nestedEntry)));
   return nestedFiles.flat();
 }
@@ -235,7 +244,15 @@ export function SubtitleWorkbench() {
   const [ocrLanguage, setOcrLanguage] = useState("eng");
   const [queueStep, setQueueStep] = useState<QueueStep>("intake");
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
-  const [batchLanguageIndex, setBatchLanguageIndex] = useState<number | null>(null);
+  // Keyed by item id, not array position: deleting an earlier row while the
+  // language panel was open used to silently re-point it at a different file,
+  // and the language was then assigned to the wrong item.
+  const [batchLanguageId, setBatchLanguageId] = useState<string | null>(null);
+  // Incremented whenever a run starts or the tool changes. Async handlers
+  // capture the value at entry and drop their results if it has moved on, so a
+  // job that finishes after the user switched tools cannot write its output
+  // into the new tool's panel.
+  const runToken = useRef(0);
   const [applyLanguageToBatch, setApplyLanguageToBatch] = useState(false);
   const [selectedBatchLanguages, setSelectedBatchLanguages] = useState<string[]>([]);
   const [ocrRunStatus, setOcrRunStatus] = useState<OcrRunStatus>("idle");
@@ -289,7 +306,9 @@ export function SubtitleWorkbench() {
   const selectedFps = fpsPreset === "other" ? customFps.trim() : fpsPreset;
   const validSelectedFps = /^\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?$/u.test(selectedFps);
   const currentBatchItem =
-    batchLanguageIndex === null ? null : activeBatchItems[batchLanguageIndex] ?? null;
+    batchLanguageId === null
+      ? null
+      : activeBatchItems.find((item) => item.id === batchLanguageId) ?? null;
   const extractLanguageChoices = Array.from(
     new Map(
       extractTracks.map((track) => [
@@ -443,7 +462,12 @@ export function SubtitleWorkbench() {
     // running, so a bridge failure that arrived within 500ms reset the rows to
     // "ready" and then the timer flipped them back to "extracting" at 65%,
     // wedging the UI with no way forward except clearing the queue.
+    runToken.current += 1;
+    const token = runToken.current;
+    const isCurrentRun = () => runToken.current === token;
+
     const advanceProgress = window.setTimeout(() => {
+      if (!isCurrentRun()) return;
       setExtractTracks((tracks) =>
         tracks.map((track) =>
           selectedExtractLanguages.includes(track.languageCode) && track.status !== "complete"
@@ -470,6 +494,7 @@ export function SubtitleWorkbench() {
         })),
       );
       window.clearTimeout(advanceProgress);
+      if (!isCurrentRun()) return;
       setCompletedExtractFiles(result.outputs);
       setExtractTracks((tracks) =>
         tracks.map((track) =>
@@ -480,6 +505,7 @@ export function SubtitleWorkbench() {
       );
     } catch (error) {
       window.clearTimeout(advanceProgress);
+      if (!isCurrentRun()) return;
       setBridgeError(bridgeFailureMessage(error));
       setCompletedExtractFiles([]);
       setExtractTracks((tracks) =>
@@ -532,25 +558,31 @@ export function SubtitleWorkbench() {
       });
     }
 
-    const supItems: BatchItem[] = await Promise.all(
-      supFiles.map(async (file, index) => {
-        let previews: PgsPreview[] = [];
+    // Sequential, and only for files small enough to be worth previewing.
+    // Promise.all here read every .sup fully into memory at once and then ran a
+    // synchronous byte scan per file on the main thread, which froze or killed
+    // the tab when a folder of large tracks was dropped.
+    const maxPreviewBytes = 64 * 1024 * 1024;
+    const supItems: BatchItem[] = [];
+    for (const [index, file] of supFiles.entries()) {
+      let previews: PgsPreview[] = [];
+      if (file.size <= maxPreviewBytes) {
         try {
           previews = extractPgsPreviewsFromBuffer(await file.arrayBuffer(), 3);
         } catch {
           previews = [];
         }
-        return {
-          id: `${file.name}-${index}-${file.size}`,
-          kind: "sup",
-          name: baseName(file.name),
-          previews,
-          selected: true,
-          sourcePath: (file as File & { path?: string }).path,
-          files: [file],
-        };
-      }),
-    );
+      }
+      supItems.push({
+        id: `${file.name}-${index}-${file.size}`,
+        kind: "sup",
+        name: baseName(file.name),
+        previews,
+        selected: true,
+        sourcePath: (file as File & { path?: string }).path,
+        files: [file],
+      });
+    }
     const subIdxItems: BatchItem[] = Array.from(subIdxGroups.entries())
       .filter(([, group]) => group.idx && group.sub)
       .map(([name, group], index) => ({
@@ -584,7 +616,13 @@ export function SubtitleWorkbench() {
       );
       return;
     }
-    setBatchItems(items);
+    // Replace only this tool's queue. The whole array used to be overwritten,
+    // so adding SUP files silently discarded a SUB/IDX or ITT queue the user
+    // had already built up in another tab.
+    setBatchItems((existing) => [
+      ...existing.filter((item) => item.kind !== active),
+      ...items,
+    ]);
     setOcrRunStatus("idle");
     setOcrProgress(0);
     setOcrEtaSeconds(0);
@@ -607,8 +645,10 @@ export function SubtitleWorkbench() {
   }
 
   function resetBatch() {
-    setBatchItems([]);
-    setBatchLanguageIndex(null);
+    runToken.current += 1;
+    // Clearing is also per-tool, for the same reason.
+    setBatchItems((existing) => existing.filter((item) => item.kind !== active));
+    setBatchLanguageId(null);
     setApplyLanguageToBatch(false);
     setSelectedBatchLanguages([]);
     setOcrRunStatus("idle");
@@ -621,6 +661,7 @@ export function SubtitleWorkbench() {
   }
 
   function resetExtract() {
+    runToken.current += 1;
     setExtractVideoFile(null);
     setExtractVideoName("");
     setExtractVideoPath("");
@@ -634,15 +675,17 @@ export function SubtitleWorkbench() {
 
   function openBatchLanguage(index = 0) {
     if (!isOcrTool) return;
-    setBatchLanguageIndex(index);
-    setOcrLanguage(activeBatchItems[index]?.language ?? "eng");
+    const target = activeBatchItems[index];
+    if (!target) return;
+    setBatchLanguageId(target.id);
+    setOcrLanguage(target.language ?? "eng");
     setApplyLanguageToBatch(false);
   }
 
   function confirmBatchLanguage(language = ocrLanguage) {
     if (!isOcrTool) return;
-    if (batchLanguageIndex === null) return;
-    const target = activeBatchItems[batchLanguageIndex];
+    if (batchLanguageId === null) return;
+    const target = activeBatchItems.find((item) => item.id === batchLanguageId);
     if (!target) return;
     setBatchItems((items) =>
       items.map((item) => {
@@ -657,7 +700,7 @@ export function SubtitleWorkbench() {
     setSelectedBatchLanguages((languages) =>
       languages.includes(language) ? languages : [...languages, language],
     );
-    setBatchLanguageIndex(null);
+    setBatchLanguageId(null);
     setQueueStep("review");
   }
 
@@ -667,7 +710,7 @@ export function SubtitleWorkbench() {
       items.map((item) => (item.id === id ? { ...item, selected: false } : item)),
     );
     if (!remainingActiveItems.length) {
-      setBatchLanguageIndex(null);
+      setBatchLanguageId(null);
       setQueueStep("intake");
     }
   }
@@ -679,9 +722,13 @@ export function SubtitleWorkbench() {
       setBridgeError("Choose a valid source FPS before converting ITT files.");
       return;
     }
+    runToken.current += 1;
+    const token = runToken.current;
+    const isCurrentRun = () => runToken.current === token;
+
     setOcrRunStatus("running");
-    setOcrProgress(isIttTool ? 22 : 12);
-    setOcrEtaSeconds(isIttTool ? 0 : 42);
+    setOcrProgress(0);
+    setOcrEtaSeconds(0);
     setShowSrtFiles(false);
     setCompletedSrtFiles([]);
     setBridgeError("");
@@ -722,6 +769,19 @@ export function SubtitleWorkbench() {
               };
             })
             .filter((item): item is BatchItem & { sourcePath: string } => !!item.sourcePath);
+
+          // Remember where the bridge put each upload. Without this a retry
+          // re-uploaded every file and left another temp workspace behind.
+          if (isCurrentRun()) {
+            setBatchItems((items) =>
+              items.map((item) => {
+                const uploadedPath = uploadedItemPaths.get(item.id);
+                return uploadedPath && !item.sourcePath
+                  ? { ...item, sourcePath: uploadedPath }
+                  : item;
+              }),
+            );
+          }
         }
       }
       if (!runnableBatchItems.length) {
@@ -742,7 +802,13 @@ export function SubtitleWorkbench() {
           groups.set(item.language ?? "eng", [...(groups.get(item.language ?? "eng") ?? []), item]);
         }
       }
-      let finishedGroups = 0;
+      // Progress is per file, from the CLI's own job-finished events. It used
+      // to be per language group, so a 40-file single-language batch sat at 0%
+      // and then jumped straight to 100%.
+      const totalFiles = bridgeItems.length;
+      let finishedFiles = 0;
+      const startedAt = Date.now();
+
       for (const [language, items] of groups) {
         await runBridgeJob(
           {
@@ -754,20 +820,39 @@ export function SubtitleWorkbench() {
             ocrEngine: "auto",
           },
           (event) => {
+            if (!isCurrentRun()) return;
+
             if (event.output && typeof event.output === "string") {
               // job-started and job-finished both carry `output`, so the same
               // file arrived twice and rendered with duplicate React keys.
               if (!outputs.includes(event.output)) outputs.push(event.output);
               setCompletedSrtFiles([...outputs]);
             }
+
+            if (event.type === "job-finished") {
+              finishedFiles += 1;
+              setOcrProgress(
+                Math.min(100, Math.round((finishedFiles / Math.max(1, totalFiles)) * 100)),
+              );
+              // Estimate from measured throughput rather than a fixed guess.
+              const elapsed = (Date.now() - startedAt) / 1000;
+              const remaining = Math.max(0, totalFiles - finishedFiles);
+              setOcrEtaSeconds(
+                finishedFiles > 0 ? Math.round((elapsed / finishedFiles) * remaining) : 0,
+              );
+            }
           },
         );
-        finishedGroups += 1;
-        setOcrProgress(Math.round((finishedGroups / groups.size) * 100));
       }
+
+      if (!isCurrentRun()) return;
+      setOcrProgress(100);
       setOcrEtaSeconds(0);
       setOcrRunStatus("complete");
     } catch (error) {
+      // A run the user has already navigated away from must not write its
+      // failure into whatever panel is on screen now.
+      if (!isCurrentRun()) return;
       // Every failure path lands here and stops. There used to be a fallthrough
       // to a setTimeout chain that ended in `complete` at 100%, so a run that
       // produced no files at all — including one that never reached the bridge
@@ -798,6 +883,8 @@ export function SubtitleWorkbench() {
   }
 
   function selectTool(toolId: ToolId) {
+    // Any run still in flight belongs to the tool we are leaving.
+    runToken.current += 1;
     setActive(toolId);
     setDragTarget(null);
     setBridgeError("");
@@ -807,7 +894,7 @@ export function SubtitleWorkbench() {
       return;
     }
     setQueueStep("intake");
-    setBatchLanguageIndex(null);
+    setBatchLanguageId(null);
     setApplyLanguageToBatch(false);
     setSelectedBatchLanguages([]);
     setOcrRunStatus("idle");
@@ -1273,7 +1360,7 @@ export function SubtitleWorkbench() {
                           <button
                             className="text-link"
                             type="button"
-                            onClick={() => setBatchLanguageIndex(null)}
+                            onClick={() => setBatchLanguageId(null)}
                           >
                             Close
                           </button>
@@ -1287,15 +1374,18 @@ export function SubtitleWorkbench() {
                             currentBatchItem.previews.map((preview) => (
                               <img
                                 alt={`Subtitle preview at ${preview.pts.toFixed(1)} seconds`}
-                                key={preview.dataUrl}
+                                key={`${preview.pts}-${preview.width}x${preview.height}`}
                                 src={preview.dataUrl}
                               />
                             ))
                           ) : (
                             <div className="preview-placeholder compact-placeholder">
-                              Nothing happened.
-                              <span>[muffled] Oh, thanks, man.</span>
-                              <span>It&apos;s a heated pool.</span>
+                              No preview available
+                              <span>
+                                {currentBatchItem.kind === "sup"
+                                  ? "This track could not be decoded for preview, or is too large to preview. OCR will still run."
+                                  : "Previews are only generated for SUP tracks."}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -1337,7 +1427,7 @@ export function SubtitleWorkbench() {
                             Existing language choices stay unchanged.
                           </p>
                           <div className="language-actions">
-                            <button type="button" onClick={() => setBatchLanguageIndex(null)}>
+                            <button type="button" onClick={() => setBatchLanguageId(null)}>
                               Cancel
                             </button>
                             <button
