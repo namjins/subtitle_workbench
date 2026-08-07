@@ -13,6 +13,7 @@ type PaletteEntry = {
 type Composition = {
   height: number;
   objects: Array<{ objectId: number; x: number; y: number }>;
+  paletteUpdateFlag: boolean;
   width: number;
 };
 
@@ -60,8 +61,13 @@ function yCrCbToRgb(y: number, cr: number, cb: number, alpha: number) {
   };
 }
 
-function parsePalette(payload: Uint8Array) {
-  const entries = new Map<number, PaletteEntry>();
+// Mirrors lib/pgs-peek.mjs: a PDS may revise only the entries it carries, so
+// replacing the whole map wiped every untouched colour.
+function parsePalette(
+  payload: Uint8Array,
+  existing: Map<number, PaletteEntry> | null = null,
+) {
+  const entries = new Map<number, PaletteEntry>(existing ?? []);
   for (let offset = 2; offset + 4 < payload.length; offset += 5) {
     entries.set(
       payload[offset],
@@ -81,17 +87,20 @@ function parseComposition(payload: Uint8Array): Composition | null {
   const objects = [];
   let offset = 11;
   for (let index = 0; index < payload[10] && offset + 7 < payload.length; index += 1) {
+    // A cropped composition object entry is 16 bytes, not 8.
+    const croppedFlag = Boolean(payload[offset + 3] & 0x40);
     objects.push({
       objectId: readUint16(payload, offset),
       x: readUint16(payload, offset + 4),
       y: readUint16(payload, offset + 6),
     });
-    offset += 8;
+    offset += croppedFlag ? 16 : 8;
   }
   return {
     width: readUint16(payload, 0),
     height: readUint16(payload, 2),
     objects,
+    paletteUpdateFlag: Boolean(payload[8] & 0x80),
   };
 }
 
@@ -236,18 +245,25 @@ function renderDisplay(
   image.data.fill(255);
   for (let index = 3; index < image.data.length; index += 4) image.data[index] = 255;
 
+  // Must match lib/pgs-peek.mjs exactly: skip palette index 0 and write the
+  // real palette colour. This previously tested alpha and painted every
+  // visible pixel pure black, so the operator reviewed a hard-edged silhouette
+  // while OCR received an anti-aliased, coloured image — the preview could not
+  // show why a cue read badly.
   for (const item of rendered) {
     const { ref, object, pixels, bounds } = item;
     for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
       for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
-        const color = palette.get(pixels[y * object.width + x]);
-        if (!color || color.alpha <= 8) continue;
+        const colorIndex = pixels[y * object.width + x];
+        if (colorIndex === 0) continue;
+        const color = palette.get(colorIndex);
+        if (!color) continue;
         const targetX = ref.x + x - minX + padding;
         const targetY = ref.y + y - minY + padding;
         const target = (targetY * width + targetX) * 4;
-        image.data[target] = 0;
-        image.data[target + 1] = 0;
-        image.data[target + 2] = 0;
+        image.data[target] = color.rgb[0];
+        image.data[target + 1] = color.rgb[1];
+        image.data[target + 2] = color.rgb[2];
       }
     }
   }
@@ -279,9 +295,9 @@ export function extractPgsPreviewsFromBuffer(buffer: ArrayBuffer, count = 3) {
 
     if (type === segment.pcs) {
       display = parseComposition(payload);
-      objectParts = new Map();
+      if (display?.objects.length) objectParts = new Map();
     } else if (type === segment.pds) {
-      palette = parsePalette(payload);
+      palette = parsePalette(payload, display?.paletteUpdateFlag ? palette : null);
     } else if (type === segment.ods) {
       parseObjectSegment(payload, objectParts);
     } else if (type === segment.end) {
