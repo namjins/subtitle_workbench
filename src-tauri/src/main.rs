@@ -151,6 +151,9 @@ fn main() {
                 .inner_size(width, height)
                 .min_inner_size(900.0, 600.0)
                 .center()
+                // Tauri's own drag-drop handler swallows HTML5 drop events;
+                // the page implements drops itself, so hand them through.
+                .disable_drag_drop_handler()
                 .build()?;
             Ok(())
         })

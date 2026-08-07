@@ -293,10 +293,6 @@ export function SubtitleWorkbench() {
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrEtaSeconds, setOcrEtaSeconds] = useState(0);
   const [completedSrtFiles, setCompletedSrtFiles] = useState<string[]>([]);
-  // The path field is the fallback for environments without a native picker;
-  // Browse fills the path directly, so the field stays out of the way until
-  // someone asks for it or the fallback needs it.
-  const [showExtractPathField, setShowExtractPathField] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
   const [jobs, setJobs] = useState(detectSafeBrowserJobs);
   const [fpsPreset, setFpsPreset] = useState("24000/1001");
@@ -385,25 +381,11 @@ export function SubtitleWorkbench() {
     setSelectedExtractLanguages([]);
     setExtractStage("intake");
     setCompletedExtractFiles([]);
-    // The fallback file input cannot reveal the path, so the instruction to
-    // paste it must come with the field it refers to.
-    if (file && !path) setShowExtractPathField(true);
     setBridgeError(
       file && !path
-        ? "Paste the MKV's full local path below. Video extraction reads the source in place and does not upload or copy it."
+        ? "This selection did not include the file's location. Use Browse, which reads the source in place without uploading or copying it."
         : "",
     );
-  }
-
-  function handleExtractPath(event: ChangeEvent<HTMLInputElement>) {
-    const path = normalizeLocalPath(event.target.value);
-    setExtractVideoPath(path);
-    setExtractVideoName(fileNameFromPath(path) || extractVideoFile?.name || "");
-    setExtractTracks([]);
-    setSelectedExtractLanguages([]);
-    setExtractStage("intake");
-    setCompletedExtractFiles([]);
-    setBridgeError("");
   }
 
   async function revealOutputs(paths: string[]) {
@@ -1102,27 +1084,6 @@ export function SubtitleWorkbench() {
 		                      Currently tested with MKV files. Extraction uses the
 		                      source path directly so large videos are not copied.
 		                    </p>
-	                    {showExtractPathField ? (
-	                      <label className="field-stack extract-path-field">
-	                        <span>Local MKV path</span>
-	                        <div className="path-picker-row">
-	                          <input
-	                            onChange={handleExtractPath}
-	                            placeholder="/path/to/videos/Example.mkv"
-	                            type="text"
-	                            value={extractVideoPath}
-	                          />
-	                        </div>
-	                      </label>
-	                    ) : (
-	                      <button
-	                        className="text-link"
-	                        type="button"
-	                        onClick={() => setShowExtractPathField(true)}
-	                      >
-	                        Or paste a file path instead
-	                      </button>
-	                    )}
 		                    {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
 		                    <div className="convert-action-row">
 	                      <button
