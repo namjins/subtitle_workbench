@@ -24,8 +24,9 @@ type BridgeUpload = {
 };
 
 type BridgePickedFile = {
-  path: string;
-  name: string;
+  // Both are null when the user cancelled the dialog.
+  path: string | null;
+  name: string | null;
 };
 
 export type BridgeVideoTrack = {
@@ -162,7 +163,23 @@ export async function pickBridgeFile(extensions: string[]) {
   if (!response.ok) {
     throw new Error(`Local bridge file picker returned ${response.status}`);
   }
+  // A cancelled dialog comes back as { path: null } — a normal outcome the
+  // caller should treat as "do nothing", not an error.
   return (await response.json()) as BridgePickedFile;
+}
+
+/** Multi-select variant; a cancelled dialog resolves to an empty array. */
+export async function pickBridgeFiles(extensions: string[]) {
+  const response = await fetch(`${bridgeOrigin}/files/pick`, {
+    method: "POST",
+    headers: bridgeHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ extensions, multiple: true }),
+  });
+  if (!response.ok) {
+    throw new Error(`Local bridge file picker returned ${response.status}`);
+  }
+  const result = (await response.json()) as { files?: BridgePickedFile[] };
+  return (result.files ?? []).filter((file) => Boolean(file.path));
 }
 
 export async function inspectBridgeVideo(input: string) {

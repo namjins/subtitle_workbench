@@ -6,6 +6,7 @@ import {
   fetchBridgeDoctorReport,
   inspectBridgeVideo,
   pickBridgeFile,
+  pickBridgeFiles,
   runBridgeJob,
   uploadBridgeFiles,
   type BridgeVideoTrack,
@@ -283,6 +284,7 @@ export function SubtitleWorkbench() {
   // job that finishes after the user switched tools cannot write its output
   // into the new tool's panel.
   const runToken = useRef(0);
+  const batchFileInputRef = useRef<HTMLInputElement | null>(null);
   const [applyLanguageToBatch, setApplyLanguageToBatch] = useState(false);
   const [selectedBatchLanguages, setSelectedBatchLanguages] = useState<string[]>([]);
   const [ocrRunStatus, setOcrRunStatus] = useState<OcrRunStatus>("idle");
@@ -402,6 +404,8 @@ export function SubtitleWorkbench() {
     setBridgeError("");
     try {
       const picked = await pickBridgeFile(["mkv"]);
+      // Cancelled dialog: leave everything exactly as it was.
+      if (!picked.path) return;
       setExtractVideoFile(null);
       setExtractVideoPath(picked.path);
       setExtractVideoName(picked.name || fileNameFromPath(picked.path));
@@ -646,6 +650,10 @@ export function SubtitleWorkbench() {
       );
       return;
     }
+    installBatchItems(items);
+  }
+
+  function installBatchItems(items: BatchItem[]) {
     // Replace only this tool's queue. The whole array used to be overwritten,
     // so adding SUP files silently discarded a SUB/IDX or ITT queue the user
     // had already built up in another tab.
@@ -660,6 +668,52 @@ export function SubtitleWorkbench() {
     setCompletedSrtFiles([]);
     setBridgeError("");
     setSelectedBatchLanguages([]);
+  }
+
+  /**
+   * Intake for files chosen through the native picker: real local paths the
+   * bridge converts in place, with no copy into an upload workspace. SUP
+   * previews need the bytes, which a path alone cannot provide, so natively
+   * picked items simply have none.
+   */
+  function loadSubtitlePaths(paths: string[]) {
+    const wanted = active === "subidx" ? /\.idx$/iu : active === "itt" ? /\.itt$/iu : /\.sup$/iu;
+    // For SUB/IDX the .idx is the input; a picked .sub only tells us the user
+    // grabbed the pair, and the converter finds it beside the .idx anyway.
+    const inputs = paths.filter((path) => wanted.test(path));
+    const items: BatchItem[] = inputs.map((path, index) => ({
+      id: `${path}-${index}`,
+      kind: active === "extract" ? "sup" : active,
+      name: baseName(fileNameFromPath(path)),
+      previews: [],
+      selected: true,
+      sourcePath: path,
+      files: [],
+    }));
+    if (!items.length) {
+      setBridgeError(
+        active === "subidx"
+          ? "Pick the .idx file (its matching .sub must sit beside it)."
+          : `Pick one or more .${active} files.`,
+      );
+      return;
+    }
+    installBatchItems(items);
+  }
+
+  async function handleBatchBrowse() {
+    const extensions =
+      active === "subidx" ? ["idx", "sub"] : active === "itt" ? ["itt"] : ["sup"];
+    try {
+      const picked = await pickBridgeFiles(extensions);
+      // Cancelled dialog: leave everything exactly as it was.
+      if (!picked.length) return;
+      loadSubtitlePaths(picked.flatMap((file) => (file.path ? [file.path] : [])));
+    } catch {
+      // No native picker here (non-macOS web bridge): fall back to the
+      // browser's file input, which uploads copies instead.
+      batchFileInputRef.current?.click();
+    }
   }
 
   async function handleBatchFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -1343,14 +1397,19 @@ export function SubtitleWorkbench() {
                       onDragLeave={() => setDragTarget(null)}
                       onDrop={handleSubtitleDrop}
                     >
-                      <label className="browse-button" htmlFor="batch-files">
+                      <button
+                        className="browse-button"
+                        type="button"
+                        onClick={handleBatchBrowse}
+                      >
                         Browse...
-                      </label>
+                      </button>
                       <input
                         accept={subtitleToolAccept}
                         id="batch-files"
                         multiple
                         onChange={handleBatchFiles}
+                        ref={batchFileInputRef}
                         type="file"
                       />
                       <span>{subtitleToolEmptyLabel}</span>

@@ -81,8 +81,9 @@ test("sanitizes uploaded file names before writing bridge temp files", () => {
 test("validates native file picker requests", () => {
   assert.deepEqual(validatePickRequest({ extensions: [".mkv", "SUP", "../bad"] }), {
     extensions: ["mkv", "sup"],
+    multiple: false,
   });
-  assert.deepEqual(validatePickRequest({}), { extensions: [] });
+  assert.deepEqual(validatePickRequest({}), { extensions: [], multiple: false });
 });
 
 test("refuses ocrCommand from the network", () => {
@@ -121,4 +122,17 @@ test("clamps a network-supplied job count", () => {
     jobs: 10000,
   });
   assert.ok(job.jobs <= maxAutomaticJobs, `expected clamped jobs, got ${job.jobs}`);
+});
+
+test("validates pick requests, including multi-select", () => {
+  assert.deepEqual(validatePickRequest({ extensions: [".SUP", "idx", "bad ext"] }), {
+    extensions: ["sup", "idx"],
+    multiple: false,
+  });
+  assert.deepEqual(validatePickRequest({ extensions: [], multiple: true }), {
+    extensions: [],
+    multiple: true,
+  });
+  // Anything other than a literal true must not switch modes.
+  assert.equal(validatePickRequest({ multiple: "yes" }).multiple, false);
 });
