@@ -7,6 +7,7 @@ import {
   inspectBridgeVideo,
   pickBridgeFile,
   pickBridgeFiles,
+  revealBridgeFile,
   runBridgeJob,
   uploadBridgeFiles,
   type BridgeVideoTrack,
@@ -291,8 +292,11 @@ export function SubtitleWorkbench() {
   const [ocrRunStatus, setOcrRunStatus] = useState<OcrRunStatus>("idle");
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrEtaSeconds, setOcrEtaSeconds] = useState(0);
-  const [showSrtFiles, setShowSrtFiles] = useState(false);
   const [completedSrtFiles, setCompletedSrtFiles] = useState<string[]>([]);
+  // The path field is the fallback for environments without a native picker;
+  // Browse fills the path directly, so the field stays out of the way until
+  // someone asks for it or the fallback needs it.
+  const [showExtractPathField, setShowExtractPathField] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
   const [jobs, setJobs] = useState(detectSafeBrowserJobs);
   const [fpsPreset, setFpsPreset] = useState("24000/1001");
@@ -380,8 +384,10 @@ export function SubtitleWorkbench() {
     setExtractTracks([]);
     setSelectedExtractLanguages([]);
     setExtractStage("intake");
-    setShowSrtFiles(false);
     setCompletedExtractFiles([]);
+    // The fallback file input cannot reveal the path, so the instruction to
+    // paste it must come with the field it refers to.
+    if (file && !path) setShowExtractPathField(true);
     setBridgeError(
       file && !path
         ? "Paste the MKV's full local path below. Video extraction reads the source in place and does not upload or copy it."
@@ -396,9 +402,24 @@ export function SubtitleWorkbench() {
     setExtractTracks([]);
     setSelectedExtractLanguages([]);
     setExtractStage("intake");
-    setShowSrtFiles(false);
     setCompletedExtractFiles([]);
     setBridgeError("");
+  }
+
+  async function revealOutputs(paths: string[]) {
+    const revealedFolders = new Set<string>();
+    for (const path of paths) {
+      const folder = path.replace(/[\\/][^\\/]*$/u, "");
+      if (revealedFolders.has(folder)) continue;
+      revealedFolders.add(folder);
+      try {
+        await revealBridgeFile(path);
+      } catch (error) {
+        setBridgeError(bridgeFailureMessage(error));
+        return;
+      }
+      if (revealedFolders.size >= 3) break;
+    }
   }
 
   async function handleExtractBrowse() {
@@ -413,7 +434,6 @@ export function SubtitleWorkbench() {
       setExtractTracks([]);
       setSelectedExtractLanguages([]);
       setExtractStage("intake");
-      setShowSrtFiles(false);
       setCompletedExtractFiles([]);
     } catch {
       // No native picker (non-macOS web bridge): the webview file input at
@@ -663,7 +683,6 @@ export function SubtitleWorkbench() {
     setOcrRunStatus("idle");
     setOcrProgress(0);
     setOcrEtaSeconds(0);
-    setShowSrtFiles(false);
     setCompletedSrtFiles([]);
     setBridgeError("");
     setSelectedBatchLanguages([]);
@@ -737,7 +756,6 @@ export function SubtitleWorkbench() {
     setOcrRunStatus("idle");
     setOcrProgress(0);
     setOcrEtaSeconds(0);
-    setShowSrtFiles(false);
     setCompletedSrtFiles([]);
     setBridgeError("");
     setQueueStep("intake");
@@ -751,7 +769,6 @@ export function SubtitleWorkbench() {
     setExtractTracks([]);
     setSelectedExtractLanguages([]);
     setExtractStage("intake");
-    setShowSrtFiles(false);
     setCompletedExtractFiles([]);
     setBridgeError("");
   }
@@ -812,7 +829,6 @@ export function SubtitleWorkbench() {
     setOcrRunStatus("running");
     setOcrProgress(0);
     setOcrEtaSeconds(0);
-    setShowSrtFiles(false);
     setCompletedSrtFiles([]);
     setBridgeError("");
 
@@ -944,7 +960,6 @@ export function SubtitleWorkbench() {
       setOcrProgress(0);
       setOcrEtaSeconds(0);
       setCompletedSrtFiles([]);
-      setShowSrtFiles(false);
       // Back to idle, not complete: the queue is intact so the run can be
       // retried once the bridge is reachable.
       setOcrRunStatus("idle");
@@ -973,7 +988,6 @@ export function SubtitleWorkbench() {
     setBridgeError("");
     if (toolId === "extract") {
       setExtractStage("intake");
-      setShowSrtFiles(false);
       return;
     }
     setQueueStep("intake");
@@ -983,7 +997,6 @@ export function SubtitleWorkbench() {
     setOcrRunStatus("idle");
     setOcrProgress(0);
     setOcrEtaSeconds(0);
-    setShowSrtFiles(false);
     setCompletedSrtFiles([]);
   }
 
@@ -1089,17 +1102,27 @@ export function SubtitleWorkbench() {
 		                      Currently tested with MKV files. Extraction uses the
 		                      source path directly so large videos are not copied.
 		                    </p>
-	                    <label className="field-stack extract-path-field">
-	                      <span>Local MKV path</span>
-	                      <div className="path-picker-row">
-	                        <input
-	                          onChange={handleExtractPath}
-	                          placeholder="/path/to/videos/Example.mkv"
-	                          type="text"
-	                          value={extractVideoPath}
-	                        />
-	                      </div>
-	                    </label>
+	                    {showExtractPathField ? (
+	                      <label className="field-stack extract-path-field">
+	                        <span>Local MKV path</span>
+	                        <div className="path-picker-row">
+	                          <input
+	                            onChange={handleExtractPath}
+	                            placeholder="/path/to/videos/Example.mkv"
+	                            type="text"
+	                            value={extractVideoPath}
+	                          />
+	                        </div>
+	                      </label>
+	                    ) : (
+	                      <button
+	                        className="text-link"
+	                        type="button"
+	                        onClick={() => setShowExtractPathField(true)}
+	                      >
+	                        Or paste a file path instead
+	                      </button>
+	                    )}
 		                    {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
 		                    <div className="convert-action-row">
 	                      <button
@@ -1312,21 +1335,14 @@ export function SubtitleWorkbench() {
 		                              <button
 		                                className="primary"
 		                                type="button"
-		                                onClick={() => setShowSrtFiles((visible) => !visible)}
+		                                onClick={() => revealOutputs(visibleExtractFiles)}
 		                              >
-		                                {showSrtFiles ? "Hide extracted files" : "Show extracted files"}
+		                                Show extracted files
 		                              </button>
 		                              <button className="danger" type="button" onClick={resetExtract}>
 		                                Clear queue
 		                              </button>
 		                            </div>
-		                            {showSrtFiles ? (
-		                              <div className="srt-file-list">
-		                                {visibleExtractFiles.map((fileName) => (
-		                                  <span key={fileName}>{fileName}</span>
-		                                ))}
-		                              </div>
-		                            ) : null}
 		                          </>
 		                        ) : selectedExtractTracks.length ? (
 		                          <button type="button" onClick={startAllExtractTracks}>
@@ -1708,21 +1724,14 @@ export function SubtitleWorkbench() {
                             <button
                               className="primary"
                               type="button"
-                              onClick={() => setShowSrtFiles((visible) => !visible)}
+                              onClick={() => revealOutputs(visibleSrtFiles)}
                             >
-                              {showSrtFiles ? "Hide SRT files" : "Show SRT files"}
+                              Show SRT files
                             </button>
                             <button className="danger" type="button" onClick={resetBatch}>
                               Clear queue
                             </button>
                           </div>
-                          {showSrtFiles ? (
-                            <div className="srt-file-list">
-                              {visibleSrtFiles.map((fileName) => (
-                                <span key={fileName}>{fileName}</span>
-                              ))}
-                            </div>
-                          ) : null}
                         </>
 	                      ) : isIttTool ? (
 	                        <>

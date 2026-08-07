@@ -177,12 +177,17 @@ async function imageOcr(mode) {
   for (const input of inputs) {
     const started = performance.now();
     const inputPath = resolve(input);
-    const args = [mode, "--lang", option("--lang", "eng")];
+    const language = option("--lang", "eng");
+    const args = [mode, "--lang", language];
+    // OCR output names carry the language (movie-eng.srt): several tracks of
+    // the same source in different languages must not overwrite each other,
+    // and it is the naming players and the benchmark pairing already expect.
+    const defaultName = `${basename(inputPath, extname(inputPath))}-${language}.srt`;
     const outputPath = outDir
-      ? join(resolve(outDir), `${basename(inputPath, extname(inputPath))}.srt`)
+      ? join(resolve(outDir), defaultName)
       : out
         ? resolve(out)
-        : join(dirname(inputPath), `${basename(inputPath, extname(inputPath))}.srt`);
+        : join(dirname(inputPath), defaultName);
     if (outputPath && hasFlag("--skip-existing") && existsSync(resolve(outputPath))) {
       process.stderr.write(`Skipping existing ${resolve(outputPath)}\n`);
       continue;

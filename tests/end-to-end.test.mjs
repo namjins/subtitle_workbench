@@ -183,7 +183,7 @@ test("keeps converting a batch after one file fails", async () => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /FAILED bad\.sup/u);
     // ...but the good file after it still converted.
-    assert.equal(existsSync(join(dir, "good.srt")), true, "batch stopped at the first failure");
+    assert.equal(existsSync(join(dir, "good-eng.srt")), true, "batch stopped at the first failure");
   });
 });
 

@@ -168,6 +168,18 @@ export async function pickBridgeFile(extensions: string[]) {
   return (await response.json()) as BridgePickedFile;
 }
 
+/** Ask the OS file manager to reveal this file in its folder. */
+export async function revealBridgeFile(path: string) {
+  const response = await fetch(`${bridgeOrigin}/files/reveal`, {
+    method: "POST",
+    headers: bridgeHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    throw new Error(`Local bridge reveal returned ${response.status}`);
+  }
+}
+
 /** Multi-select variant; a cancelled dialog resolves to an empty array. */
 export async function pickBridgeFiles(extensions: string[]) {
   const response = await fetch(`${bridgeOrigin}/files/pick`, {

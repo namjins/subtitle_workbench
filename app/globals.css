@@ -71,7 +71,7 @@ body > div {
   display: flex;
   flex: 1;
   flex-direction: column;
-  width: min(1440px, calc(100% - 32px));
+  width: min(1330px, calc(100% - 32px));
   margin: 0 auto;
   padding: 12px 0 24px;
 }

@@ -122,12 +122,12 @@ fn main() {
                 .expect("bridge URL is always valid");
 
             // The measured natural size of the tallest tool at the wide
-            // two-column layout (Extract, 924px at 1500px wide): opening at
-            // this size shows every tool without scrollbars. Clamped to the
+            // two-column layout: opening at this size shows every tool
+            // without scrollbars or spare right-hand margin. Clamped to the
             // monitor — with headroom for the menu bar / task bar, which the
             // reported monitor size includes — so a small screen gets a
             // window that fits it instead.
-            let mut width: f64 = 1500.0;
+            let mut width: f64 = 1380.0;
             let mut height: f64 = 930.0;
             if let Ok(Some(monitor)) = app.primary_monitor() {
                 let scale = monitor.scale_factor();
