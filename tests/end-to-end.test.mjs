@@ -22,6 +22,12 @@ function runCli(args, options = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
     cwd: options.cwd ?? repoRoot,
+    // cacheDir redirects the whole cache root — used by the cache test for a
+    // private conversion cache. Left unset elsewhere so the prebuilt Vision
+    // helper is reused rather than rebuilt per run.
+    env: options.cacheDir
+      ? { ...process.env, SUBTITLE_WORKBENCH_CACHE_DIR: options.cacheDir }
+      : process.env,
   });
 }
 
@@ -55,7 +61,7 @@ test("decodes a real PGS track to the timings in its reference SRT", async () =>
 test("converts a real PGS track end to end", { skip: !canOcr && "OCR tools unavailable" }, async () => {
   await withTempDir(async (dir) => {
     const output = join(dir, "out.srt");
-    const result = runCli(["sup-to-srt", "--lang", "eng", "--out", output, "--quiet", "--", realSup]);
+    const result = runCli(["sup-to-srt", "--lang", "eng", "--out", output, "--quiet", "--no-cache", "--", realSup]);
 
     assert.equal(result.status, 0, result.stderr);
     const srt = await readFile(output, "utf8");
@@ -135,7 +141,7 @@ test("fails loudly instead of writing an empty SRT", async () => {
     const input = join(dir, "empty.sup");
     await writeFile(input, Buffer.alloc(0));
 
-    const result = runCli(["sup-to-srt", "--out", join(dir, "out.srt"), "--quiet", "--", input]);
+    const result = runCli(["sup-to-srt", "--out", join(dir, "out.srt"), "--quiet", "--no-cache", "--", input]);
 
     assert.notEqual(result.status, 0, "decoding nothing must not report success");
     assert.equal(existsSync(join(dir, "out.srt")), false, "no empty SRT should be left behind");
@@ -150,7 +156,7 @@ test("writes an empty SRT for a track that renders nothing", async () => {
     await writeFile(input, buildPgsFixture([{ start: 1, end: 3 }], { blank: true }));
     const output = join(dir, "blank.srt");
 
-    const result = runCli(["sup-to-srt", "--out", output, "--quiet", "--", input]);
+    const result = runCli(["sup-to-srt", "--out", output, "--quiet", "--no-cache", "--", input]);
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /no visible subtitles/iu);
@@ -250,5 +256,58 @@ test("counts a candidate cue in a declared reference gap as unverified, not extr
     assert.equal(report.rows[0].extra, 0);
     assert.equal(report.rows[0].unverified, 1);
     assert.equal(report.rows[0].note, "reference-missing-cue");
+  });
+});
+
+test("serves a repeat conversion from the cache, keyed by content and stamped with the producing version", { skip: !canOcr && "OCR tools unavailable" }, async () => {
+  await withTempDir(async (dir) => {
+    const cacheDir = join(dir, "cache");
+    const original = join(dir, "movie.sup");
+    const renamed = join(dir, "same bytes, different name.sup");
+    await writeFile(original, await readFile(realSup));
+    await writeFile(renamed, await readFile(realSup));
+    // tesseract-accurate, not auto: auto's probe would build the Vision
+    // helper inside the test-private cache directory on macOS.
+    const convertArgs = (input, output) => [
+      "sup-to-srt", "--lang", "eng", "--ocr-engine", "tesseract-accurate",
+      "--out", output, "--quiet", "--", input,
+    ];
+
+    const first = runCli(convertArgs(original, join(dir, "a.srt")), { cacheDir });
+    assert.equal(first.status, 0, first.stderr);
+    assert.doesNotMatch(first.stderr, /reused cached conversion/u);
+
+    // Same bytes under another name: a hit, byte-identical output.
+    const second = runCli(convertArgs(renamed, join(dir, "b.srt")), { cacheDir });
+    assert.equal(second.status, 0, second.stderr);
+    assert.match(second.stderr, /reused cached conversion from app version \d/u);
+    assert.equal(
+      await readFile(join(dir, "b.srt"), "utf8"),
+      await readFile(join(dir, "a.srt"), "utf8"),
+    );
+
+    // An entry from an older app version is served but says so, so the user
+    // can decide whether to reconvert.
+    const { readdir } = await import("node:fs/promises");
+    const conversions = join(cacheDir, "conversions");
+    const [entryFile] = await readdir(conversions);
+    const entry = JSON.parse(await readFile(join(conversions, entryFile), "utf8"));
+    await writeFile(
+      join(conversions, entryFile),
+      JSON.stringify({ ...entry, appVersion: "0.0.1" }),
+    );
+    const stale = runCli(convertArgs(original, join(dir, "c.srt")), { cacheDir });
+    assert.equal(stale.status, 0, stale.stderr);
+    assert.match(stale.stderr, /app version 0\.0\.1 — current is \d/u);
+
+    // --no-cache reconverts and replaces the entry with the current version.
+    const forced = runCli(
+      [...convertArgs(original, join(dir, "d.srt")).slice(0, -2), "--no-cache", "--", original],
+      { cacheDir },
+    );
+    assert.equal(forced.status, 0, forced.stderr);
+    assert.doesNotMatch(forced.stderr, /reused cached conversion/u);
+    const replaced = JSON.parse(await readFile(join(conversions, entryFile), "utf8"));
+    assert.notEqual(replaced.appVersion, "0.0.1");
   });
 });

@@ -6,6 +6,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { parseArgv } from "../lib/cli-args.mjs";
+import {
+  appVersion,
+  conversionCacheKey,
+  readCachedConversion,
+  writeCachedConversion,
+} from "../lib/conversion-cache.mjs";
 import { cacheDirectory, hasCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
@@ -438,11 +444,15 @@ async function main() {
     throw new Error(`Input file not found: ${input}`);
   }
 
+  // Every file whose bytes determine the conversion result, for the cache
+  // key: VobSub timing and palette live in the .idx, the bitmaps in the .sub.
+  const sourcePaths = [input];
   if (mode === "subidx-to-srt") {
     const subPath = join(dirname(input), `${basename(input, extname(input))}.sub`);
     if (!existsSync(subPath)) {
       throw new Error(`Matching .sub file not found: ${subPath}`);
     }
+    sourcePaths.push(subPath);
   } else if (mode !== "sup-to-srt") {
     throw new Error(`Unknown mode: ${mode}`);
   }
@@ -466,9 +476,43 @@ async function main() {
     limit = Math.floor(parsed);
   }
 
+  const outputPath = resolve(output);
+
+  // A --limit run is a deliberately partial conversion; it must neither be
+  // served from the cache of a full one nor be stored as if it were one.
+  const cacheable = limit === null;
+  const cacheKey = cacheable
+    ? await conversionCacheKey({
+        sourcePaths,
+        mode,
+        language,
+        engine: readOption("--ocr-engine", "auto"),
+        textCleanup: readOption("--text-cleanup", "generic"),
+        ocrCommand: readOption("--ocr-command"),
+      })
+    : null;
+
+  if (cacheable && !cli.has("--no-cache")) {
+    const cached = await readCachedConversion(cacheKey);
+    if (cached) {
+      await mkdir(dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, cached.srt, "utf8");
+      const current = appVersion();
+      const versionNote =
+        cached.appVersion === current
+          ? `app version ${cached.appVersion}`
+          : `app version ${cached.appVersion} — current is ${current}`;
+      process.stderr.write(
+        `Wrote ${cached.cueCount} cues to ${outputPath} ` +
+          `(reused cached conversion from ${versionNote}; pass --no-cache to reconvert)\n`,
+      );
+      return;
+    }
+  }
+
   await convert(
     input,
-    resolve(output),
+    outputPath,
     language,
     keepTemp,
     mode,
@@ -477,6 +521,19 @@ async function main() {
     jobs,
     limit,
   );
+
+  if (cacheable) {
+    const srt = await readFile(outputPath, "utf8");
+    await writeCachedConversion(cacheKey, {
+      appVersion: appVersion(),
+      mode,
+      language,
+      sourceName: basename(input),
+      cueCount: (srt.match(/ --> /g) ?? []).length,
+      createdAt: new Date().toISOString(),
+      srt,
+    });
+  }
 }
 
 main().catch((error) => {

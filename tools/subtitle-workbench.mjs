@@ -33,8 +33,8 @@ Usage:
   subtitle-workbench doctor [--json] [--lang eng] [--feature ocr|extract]
   subtitle-workbench extract-english <video-dir> [--languages eng,spa|--all-languages] [--jobs auto|4]
   subtitle-workbench peek-sup <file.sup> [--out-dir dir] [--count 3]
-  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--quiet] [--json-events]
-  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--quiet] [--json-events]
+  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--no-cache] [--quiet] [--json-events]
+  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--no-cache] [--quiet] [--json-events]
   subtitle-workbench itt-to-srt <files.itt...> [--fps 24000/1001] [--out file.srt] [--out-dir dir] [--skip-existing] [--json-events]
   subtitle-workbench benchmark-ocr --reference reference.srt --candidate candidate.srt
   subtitle-workbench benchmark-ocr --examples-dir dir --candidate-dir dir [--csv out.csv] [--details out.json]
@@ -176,6 +176,7 @@ async function imageOcr(mode) {
     args.push("--out", resolve(outputPath));
     if (hasFlag("--keep-temp")) args.push("--keep-temp");
     if (hasFlag("--quiet")) args.push("--quiet");
+    if (hasFlag("--no-cache")) args.push("--no-cache");
     if (option("--limit")) args.push("--limit", option("--limit"));
     const jobs = normalizeJobs(option("--jobs", "auto"));
     args.push("--jobs", String(jobs));

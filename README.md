@@ -129,7 +129,14 @@ whole disc.
 | `--lang eng` | OCR language. Needs matching Tesseract language data installed. |
 | `--ocr-engine auto` | See below. |
 | `--skip-existing` | Leave already-converted files alone. |
+| `--no-cache` | Reconvert even when a cached result exists (see below). |
 | `--quiet` | Suppress per-cue progress. |
+
+Finished OCR conversions are cached by the *content* of the source file, so
+converting the same disc again — under any filename, to any destination — is
+instant. Each reuse says which app version produced the cached result; if
+that version is older than the one you are running, pass `--no-cache` to
+reconvert, which replaces the cached copy. Only the latest result is kept.
 
 ## OCR engines
 
