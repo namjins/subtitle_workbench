@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    # Windows is included deliberately: the OCR pipeline could not start there
+    # at all until recently, and that class of bug is invisible from macOS.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install subtitle tooling (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick tesseract-ocr mkvtoolnix
+
+      - name: Install subtitle tooling (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg imagemagick tesseract mkvtoolnix
+
+      - name: Install subtitle tooling (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y ffmpeg imagemagick tesseract mkvtoolnix
+        shell: pwsh
+
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+      # Exercises the CLI against the committed fixtures. The OCR-text
+      # assertions skip themselves where the tools are unavailable; the decode
+      # assertions always run.
+      - run: npm test
+
+      - name: Dependency report
+        run: node tools/subtitle-workbench.mjs doctor || true
