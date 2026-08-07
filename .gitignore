@@ -40,3 +40,12 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# scratch space for OCR runs, benchmark candidates and built helper binaries
+/.tmp/
+
+# Local fixture media. Deliberately not tracked: these are large (~1.3GB) and
+# derived from commercial discs. Tests use the small synthetic fixtures in
+# tests/fixtures instead; the full set only drives the local `ocr:gate` run.
+/Subtitle Examples/
+/sub:idx examples/
