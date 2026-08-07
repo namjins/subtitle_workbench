@@ -6,6 +6,11 @@ conversion pipeline end to end on committed fixtures; this list is the
 GUI-and-hardware remainder. Record results (pass/fail, numbers, oddities)
 in RUNNING_NOTES.
 
+Results of the first run, on Windows 11, are in
+`windows-verification-results.md`, including two findings still open: the
+Explorer reveal opening behind the browser, and the OCR gate not being
+passable on Windows.
+
 ## Setup (fresh machine, following only the README)
 
 - [ ] Follow the README's Windows install section exactly as written.
