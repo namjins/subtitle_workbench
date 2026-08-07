@@ -9,7 +9,9 @@ import { parseArgv } from "../lib/cli-args.mjs";
 import {
   appVersion,
   conversionCacheKey,
+  isCachedConversionStale,
   readCachedConversion,
+  recogniserVersion,
   writeCachedConversion,
 } from "../lib/conversion-cache.mjs";
 import { installInstructionsForPlatform } from "../lib/dependency-doctor.mjs";
@@ -499,7 +501,15 @@ async function main() {
 
   if (cacheable && !cli.has("--no-cache")) {
     const cached = await readCachedConversion(cacheKey);
-    if (cached) {
+    // An entry produced by a different Tesseract is not what a fresh run would
+    // give, so it is a miss rather than a hit. Without this, upgrading the
+    // recogniser silently changes nothing for anything already converted.
+    if (cached && isCachedConversionStale(cached)) {
+      process.stderr.write(
+        `Ignoring cached conversion: it was produced by ${cached.engineVersion}, ` +
+          `and ${recogniserVersion()} is installed now. Reconverting.\n`,
+      );
+    } else if (cached) {
       await mkdir(dirname(outputPath), { recursive: true });
       await writeFile(outputPath, cached.srt, "utf8");
       const current = appVersion();
@@ -538,6 +548,9 @@ async function main() {
     const srt = await readFile(outputPath, "utf8");
     await writeCachedConversion(cacheKey, {
       appVersion: appVersion(),
+      // Recorded so a later run can tell whether the recogniser has changed
+      // under it; see isCachedConversionStale.
+      engineVersion: recogniserVersion(),
       mode,
       language,
       sourceName: basename(input),

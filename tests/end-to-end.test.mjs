@@ -273,6 +273,20 @@ test("serves a repeat conversion from the cache, keyed by content and stamped wi
     assert.doesNotMatch(forced.stderr, /reused cached conversion/u);
     const replaced = JSON.parse(await readFile(join(conversions, entryFile), "utf8"));
     assert.notEqual(replaced.appVersion, "0.0.1");
+
+    // An entry produced by a different recogniser is NOT served. Upgrading
+    // Tesseract must actually take effect: 5.4 reads some low-contrast frames
+    // as empty and drops those cues, so a user told to upgrade and still handed
+    // the 5.4 result has no way to tell the upgrade did nothing.
+    assert.equal(typeof replaced.engineVersion, "string");
+    await writeFile(
+      join(conversions, entryFile),
+      JSON.stringify({ ...replaced, engineVersion: "tesseract v0.0.1-ancient" }),
+    );
+    const upgraded = runCli(convertArgs(original, join(dir, "e.srt")), { cacheDir });
+    assert.equal(upgraded.status, 0, upgraded.stderr);
+    assert.match(upgraded.stderr, /Ignoring cached conversion/u);
+    assert.doesNotMatch(upgraded.stderr, /reused cached conversion/u);
   });
 });
 

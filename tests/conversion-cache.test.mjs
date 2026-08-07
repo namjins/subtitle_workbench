@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   appVersion,
   conversionCacheKey,
+  isCachedConversionStale,
   readCachedConversion,
   writeCachedConversion,
 } from "../lib/conversion-cache.mjs";
@@ -32,6 +33,29 @@ const baseOptions = {
   engine: "auto",
   textCleanup: "generic",
 };
+
+test("an entry from a different recogniser is stale, but a missing one is not", () => {
+  const v55 = "tesseract v5.5.3.20260724";
+  const v54 = "tesseract v5.4.0.20240606";
+
+  // The bug this exists for: "auto" is unchanged by a Tesseract upgrade, but
+  // the text is not. 5.4 reads some low-contrast frames as empty and drops
+  // those cues; 5.5 reads them. Upgrading must not leave the lossy result in
+  // place with nothing to show the upgrade did nothing.
+  assert.equal(isCachedConversionStale({ engineVersion: v54 }, v55), true);
+  assert.equal(isCachedConversionStale({ engineVersion: v55 }, v55), false);
+
+  // Never stale when either side is unknown. `absent` means the tools are gone,
+  // and an entry predating this field has nothing to compare -- in both cases
+  // the cached result is the best answer available, not a stale one. Throwing
+  // it away would undo a finished conversion for someone who has since
+  // uninstalled Tesseract.
+  assert.equal(isCachedConversionStale({ engineVersion: v54 }, "absent"), false);
+  assert.equal(isCachedConversionStale({ engineVersion: "absent" }, v55), false);
+  assert.equal(isCachedConversionStale({}, v55), false);
+  assert.equal(isCachedConversionStale({ engineVersion: "" }, v55), false);
+  assert.equal(isCachedConversionStale(null, v55), false);
+});
 
 test("keys by content, not by name or location", async () => {
   await withTempCache(async (dir) => {
