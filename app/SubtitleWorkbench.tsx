@@ -246,7 +246,7 @@ export function SubtitleWorkbench() {
   const [extractVideoPath, setExtractVideoPath] = useState("");
   const [extractTracks, setExtractTracks] = useState<ExtractTrack[]>([]);
   const [completedExtractFiles, setCompletedExtractFiles] = useState<string[]>([]);
-  const [selectedExtractLanguages, setSelectedExtractLanguages] = useState<string[]>([]);
+  const [selectedExtractTrackIds, setSelectedExtractTrackIds] = useState<string[]>([]);
   const [dragTarget, setDragTarget] = useState<"extract" | "subtitles" | null>(null);
   const [ocrLanguage, setOcrLanguage] = useState("eng");
   const [queueStep, setQueueStep] = useState<QueueStep>("intake");
@@ -310,8 +310,14 @@ export function SubtitleWorkbench() {
     ).values(),
   );
   const selectedExtractTracks = extractTracks.filter((track) =>
-    selectedExtractLanguages.includes(track.languageCode),
+    selectedExtractTrackIds.includes(track.id),
   );
+  const isTrackSelected = (track: ExtractTrack) =>
+    selectedExtractTrackIds.includes(track.id);
+  const isLanguageFullySelected = (languageCode: string) => {
+    const tracks = extractTracks.filter((track) => track.languageCode === languageCode);
+    return tracks.length > 0 && tracks.every(isTrackSelected);
+  };
   const extractStepIndex = queueSteps.findIndex(([step]) => step === extractStage);
   const extractRunning = selectedExtractTracks.some((track) =>
     ["queued", "extracting"].includes(track.status),
@@ -336,7 +342,7 @@ export function SubtitleWorkbench() {
     setExtractVideoName(file?.name ?? "");
     setExtractVideoPath(path);
     setExtractTracks([]);
-    setSelectedExtractLanguages([]);
+    setSelectedExtractTrackIds([]);
     setExtractStage("intake");
     setCompletedExtractFiles([]);
     setBridgeError(
@@ -371,7 +377,7 @@ export function SubtitleWorkbench() {
       setExtractVideoPath(picked.path);
       setExtractVideoName(picked.name || fileNameFromPath(picked.path));
       setExtractTracks([]);
-      setSelectedExtractLanguages([]);
+      setSelectedExtractTrackIds([]);
       setExtractStage("intake");
       setCompletedExtractFiles([]);
     } catch {
@@ -412,27 +418,38 @@ export function SubtitleWorkbench() {
         progress: 0,
       }));
       setExtractTracks(tracks);
-      setSelectedExtractLanguages(Array.from(new Set(tracks.map((track) => track.languageCode))));
+      setSelectedExtractTrackIds(tracks.map((track) => track.id));
       setExtractStage("review");
     } catch (error) {
       setBridgeError(error instanceof Error ? error.message : "Video inspection failed.");
     }
   }
 
+  function toggleExtractTrack(trackId: string) {
+    setSelectedExtractTrackIds((ids) =>
+      ids.includes(trackId) ? ids.filter((id) => id !== trackId) : [...ids, trackId],
+    );
+  }
+
+  // The language chip is a bulk toggle over its tracks: fully selected turns
+  // them all off, anything less turns them all on.
   function toggleExtractLanguage(languageCode: string) {
-    setSelectedExtractLanguages((languages) =>
-      languages.includes(languageCode)
-        ? languages.filter((language) => language !== languageCode)
-        : [...languages, languageCode],
+    const languageTrackIds = extractTracks
+      .filter((track) => track.languageCode === languageCode)
+      .map((track) => track.id);
+    setSelectedExtractTrackIds((ids) =>
+      languageTrackIds.every((id) => ids.includes(id))
+        ? ids.filter((id) => !languageTrackIds.includes(id))
+        : [...new Set([...ids, ...languageTrackIds])],
     );
   }
 
   function selectAllExtractLanguages() {
-    setSelectedExtractLanguages(extractLanguageChoices.map((language) => language.code));
+    setSelectedExtractTrackIds(extractTracks.map((track) => track.id));
   }
 
   function clearExtractLanguages() {
-    setSelectedExtractLanguages([]);
+    setSelectedExtractTrackIds([]);
   }
 
   async function startAllExtractTracks() {
@@ -443,7 +460,7 @@ export function SubtitleWorkbench() {
     setCompletedExtractFiles([]);
     setExtractTracks((tracks) =>
       tracks.map((track) => {
-        if (!selectedExtractLanguages.includes(track.languageCode)) return track;
+        if (!selectedExtractTrackIds.includes(track.id)) return track;
         if (track.status === "complete") return track;
         return track.id === firstPending.id
           ? { ...track, status: "extracting", progress: 28 }
@@ -462,7 +479,7 @@ export function SubtitleWorkbench() {
       if (!isCurrentRun()) return;
       setExtractTracks((tracks) =>
         tracks.map((track) =>
-          selectedExtractLanguages.includes(track.languageCode) && track.status !== "complete"
+          selectedExtractTrackIds.includes(track.id) && track.status !== "complete"
             ? { ...track, status: "extracting", progress: 65 }
             : track,
         ),
@@ -490,7 +507,7 @@ export function SubtitleWorkbench() {
       setCompletedExtractFiles(result.outputs);
       setExtractTracks((tracks) =>
         tracks.map((track) =>
-          selectedExtractLanguages.includes(track.languageCode)
+          selectedExtractTrackIds.includes(track.id)
             ? { ...track, status: "complete", progress: 100 }
             : track,
         ),
@@ -502,7 +519,7 @@ export function SubtitleWorkbench() {
       setCompletedExtractFiles([]);
       setExtractTracks((tracks) =>
         tracks.map((track) =>
-          selectedExtractLanguages.includes(track.languageCode)
+          selectedExtractTrackIds.includes(track.id)
             ? { ...track, status: "ready", progress: 0 }
             : track,
         ),
@@ -690,7 +707,7 @@ export function SubtitleWorkbench() {
     setExtractVideoName("");
     setExtractVideoPath("");
     setExtractTracks([]);
-    setSelectedExtractLanguages([]);
+    setSelectedExtractTrackIds([]);
     setExtractStage("intake");
     setCompletedExtractFiles([]);
     setBridgeError("");
@@ -1111,7 +1128,7 @@ export function SubtitleWorkbench() {
 		                          {extractLanguageChoices.map((language) => (
 		                            <label className="language-checkbox" key={language.code}>
 		                              <input
-		                                checked={selectedExtractLanguages.includes(language.code)}
+		                                checked={isLanguageFullySelected(language.code)}
 		                                onChange={() => toggleExtractLanguage(language.code)}
 		                                type="checkbox"
 		                              />
@@ -1128,7 +1145,7 @@ export function SubtitleWorkbench() {
 		                          <span>Selection</span>
 		                        </div>
 		                        {extractTracks.map((track) => {
-		                          const isSelected = selectedExtractLanguages.includes(track.languageCode);
+		                          const isSelected = isTrackSelected(track);
 		                          return (
 		                            <div
 		                              className={
@@ -1149,7 +1166,14 @@ export function SubtitleWorkbench() {
 		                                </small>
 		                              </div>
 		                              <div className="extract-track-actions">
-		                                <span>{isSelected ? "Selected" : "Skipped"}</span>
+		                                <label className="track-toggle">
+		                                  <input
+		                                    checked={isSelected}
+		                                    onChange={() => toggleExtractTrack(track.id)}
+		                                    type="checkbox"
+		                                  />
+		                                  <span>{isSelected ? "Selected" : "Skipped"}</span>
+		                                </label>
 		                              </div>
 		                            </div>
 		                          );
@@ -1178,7 +1202,7 @@ export function SubtitleWorkbench() {
 		                          extractLanguageChoices.map((language) => (
 		                            <label key={language.code}>
 		                              <input
-		                                checked={selectedExtractLanguages.includes(language.code)}
+		                                checked={isLanguageFullySelected(language.code)}
 		                                onChange={() => toggleExtractLanguage(language.code)}
 		                                type="checkbox"
 		                              />

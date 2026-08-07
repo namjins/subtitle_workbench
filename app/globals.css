@@ -1128,3 +1128,17 @@ ol.batch-tabs {
     text-transform: uppercase;
   }
 }
+
+.track-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.track-toggle input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
