@@ -1817,6 +1817,32 @@ onClick={() => setQueueStep(step)}
 	                      ) : selectedBatchLanguages.length ? (
 	                        <>
 	                          {bridgeError ? <p className="error-text">{bridgeError}</p> : null}
+	                          {/* A partial failure keeps the files that did convert; show
+	                              where they are. No success heading — the error stays on
+	                              top, so this cannot read as a completed run. For dragged-in
+	                              files these paths are the upload workspace: a browser
+	                              cannot reveal dropped files' locations, so the bridge
+	                              converts copies. Browse converts in place instead. */}
+	                          {bridgeError && visibleSrtFiles.length ? (
+	                            <>
+	                              <ul className="srt-file-list">
+	                                {visibleSrtFiles.map((path) => (
+	                                  <li key={path}>
+	                                    <span>{path}</span>
+	                                  </li>
+	                                ))}
+	                              </ul>
+	                              <div className="result-actions">
+	                                <button
+	                                  className="primary"
+	                                  type="button"
+	                                  onClick={() => revealOutputs(visibleSrtFiles)}
+	                                >
+	                                  Show finished SRT files
+	                                </button>
+	                              </div>
+	                            </>
+	                          ) : null}
 	                          <button type="button" onClick={startBatch}>
 	                            {bridgeError ? "Try OCR again" : "Run OCR"}
 	                          </button>
