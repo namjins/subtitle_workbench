@@ -19,7 +19,7 @@ import { installInstructionsForPlatform } from "../lib/dependency-doctor.mjs";
 import { cacheDirectory, hasCommand, imageMagickCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine, isMacosVisionAvailable } from "../lib/ocr-tesseract.mjs";
-import { toSrtDocument } from "../lib/subtitle-core.mjs";
+import { srtTime, toSrtDocument } from "../lib/subtitle-core.mjs";
 import { countPgsDisplaySets, extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
 const usage = `
@@ -114,17 +114,6 @@ function checkBinaries(commands) {
     ].join("\n"),
   );
 }
-
-function secondsToSrtTime(seconds) {
-  const safe = Math.max(0, Number(seconds) || 0);
-  const hours = Math.floor(safe / 3600);
-  const minutes = Math.floor((safe % 3600) / 60);
-  const secs = Math.floor(safe % 60);
-  const millis = Math.round((safe - Math.floor(safe)) * 1000);
-  const pad = (value, size = 2) => String(value).padStart(size, "0");
-  return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${pad(millis, 3)}`;
-}
-
 
 async function imageStatsAsync(imagePath) {
   const output = await runAsync(imageMagickCommand() ?? "magick", [
@@ -471,7 +460,7 @@ async function convert(
       .map((cue, index) =>
         [
           String(index + 1),
-          `${secondsToSrtTime(cue.start)} --> ${secondsToSrtTime(cue.end)}`,
+          `${srtTime(cue.start)} --> ${srtTime(cue.end)}`,
           cue.text,
         ].join("\n"),
       )
