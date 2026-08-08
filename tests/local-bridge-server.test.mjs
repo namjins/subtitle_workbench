@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { detectSafeJobs, maxAutomaticJobs } from "../lib/cpu-jobs.mjs";
 import {
+  parseBridgePort,
   safeUploadName,
   validateExtractRequest,
   validateJob,
@@ -169,6 +170,18 @@ test("rejects a non-integer or negative stemIndex on extract requests", () => {
     send(2).tracks[0].stemIndex,
     2,
   );
+});
+
+test("parses and validates a bridge port", () => {
+  assert.equal(parseBridgePort("9000"), 9000);
+  assert.equal(parseBridgePort(undefined), 8765);
+  assert.equal(parseBridgePort(""), 8765);
+  assert.equal(parseBridgePort("0"), 0);
+  // NaN used to reach listen(), which then bound a random port and printed a
+  // http://127.0.0.1:NaN/ banner.
+  assert.throws(() => parseBridgePort("abc"), /Invalid port/u);
+  assert.throws(() => parseBridgePort("70000"), /Invalid port/u);
+  assert.throws(() => parseBridgePort("-1"), /Invalid port/u);
 });
 
 test("validates pick requests, including multi-select", () => {

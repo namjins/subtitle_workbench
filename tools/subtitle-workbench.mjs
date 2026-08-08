@@ -11,6 +11,7 @@ import {
   parseLanguageList,
 } from "../lib/batch-extract.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
+import { appVersion } from "../lib/conversion-cache.mjs";
 import { formatJobEvent } from "../lib/local-job-events.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
@@ -23,12 +24,13 @@ const usage = `
 Subtitle Workbench CLI
 
 Usage:
+  subtitle-workbench --version
   subtitle-workbench ui [--port 8765] [--no-open]
   subtitle-workbench doctor [--json] [--lang eng] [--feature ocr|extract]
   subtitle-workbench extract-english <video-dir> [--languages eng,spa|--all-languages] [--jobs auto|4]
   subtitle-workbench peek-sup <file.sup> [--out-dir dir] [--count 3]
-  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--no-cache] [--quiet] [--json-events]
-  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--no-cache] [--quiet] [--json-events]
+  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command ./sidecar] [--text-cleanup generic|fitted] [--limit N] [--skip-existing] [--no-cache] [--keep-temp] [--quiet] [--json-events]
+  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command ./sidecar] [--text-cleanup generic|fitted] [--limit N] [--skip-existing] [--no-cache] [--keep-temp] [--quiet] [--json-events]
   subtitle-workbench benchmark-ocr --reference reference.srt --candidate candidate.srt
   subtitle-workbench benchmark-ocr --examples-dir dir --candidate-dir dir [--csv out.csv] [--details out.json]
   subtitle-workbench inspect-missing-ocr --details benchmark-details.json --out-dir dir [--examples-dir dir] [--kind missing|text]
@@ -113,7 +115,9 @@ function emitJobEvent(type, fields = {}) {
 
 async function extractEnglish() {
   const [videoDir] = positionalArgs();
-  if (!videoDir) throw new Error("No video directory provided.");
+  if (!videoDir) {
+    throw new Error("No video directory provided. Run `subtitle-workbench --help` for usage.");
+  }
 
   // Fail before scanning, with install help, rather than per file once the
   // batch is running. Silent when everything is present.
@@ -153,7 +157,9 @@ async function extractEnglish() {
 
 async function imageOcr(mode) {
   const inputs = positionalArgs();
-  if (!inputs.length) throw new Error("No input file provided.");
+  if (!inputs.length) {
+    throw new Error("No input file provided. Run `subtitle-workbench --help` for usage.");
+  }
   const out = option("--out");
   const outDir = option("--out-dir");
   if (out && inputs.length > 1) {
@@ -275,7 +281,9 @@ function doctor() {
 }
 
 async function startUi() {
-  const { createLocalBridgeServer } = await import("../lib/local-bridge-server.mjs");
+  const { createLocalBridgeServer, parseBridgePort } = await import(
+    "../lib/local-bridge-server.mjs"
+  );
   const distDir = join(root, "dist");
   if (!existsSync(join(distDir, "index.html"))) {
     throw new Error(
@@ -283,7 +291,7 @@ async function startUi() {
     );
   }
 
-  const port = Number(option("--port", process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT ?? "8765"));
+  const port = parseBridgePort(option("--port") ?? process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT);
   const host = process.env.SUBTITLE_WORKBENCH_BRIDGE_HOST ?? "127.0.0.1";
   // Under `npm run dev` the page is served by Vite on another port, so it has
   // no injected token. Allowlisting that origin is opt-in and never on by
@@ -331,7 +339,9 @@ async function startUi() {
 
 async function peekSup() {
   const [input] = positionalArgs();
-  if (!input) throw new Error("No SUP file provided.");
+  if (!input) {
+    throw new Error("No SUP file provided. Run `subtitle-workbench --help` for usage.");
+  }
   const outDir = resolve(option("--out-dir", "./sup-preview"));
   const count = Number(option("--count", "3"));
   const previews = await extractPgsPreviewImages(resolve(input), outDir, count);
@@ -345,7 +355,12 @@ async function peekSup() {
 
 async function main() {
   const command = cli.command;
-  if (!command || command === "--help" || command === "-h") {
+  // --version / -v works both as the command and as a flag on any command.
+  if (command === "--version" || command === "-v" || hasFlag("--version") || hasFlag("-v")) {
+    process.stdout.write(`${appVersion()}\n`);
+    return;
+  }
+  if (!command || command === "--help" || command === "-h" || hasFlag("--help")) {
     process.stdout.write(usage);
     return;
   }
@@ -367,7 +382,7 @@ async function main() {
   } else if (command === "inspect-missing-ocr") {
     inspectMissingOcr();
   } else {
-    throw new Error(`Unknown command: ${command}`);
+    throw new Error(`Unknown command: ${command}. Run \`subtitle-workbench --help\` for usage.`);
   }
 }
 
