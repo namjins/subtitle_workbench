@@ -60,6 +60,70 @@ test("builds mkvextract output specs for VobSub and PGS", () => {
   ]);
 });
 
+test("assigns per-suffix stem indices over the full track list", () => {
+  const tracks = parseMkvSubtitleTracks({
+    tracks: [
+      { id: 2, type: "subtitles", codec: "S_HDMV/PGS", properties: { language: "eng" } },
+      { id: 3, type: "subtitles", codec: "S_HDMV/PGS", properties: { language: "eng" } },
+      {
+        id: 4,
+        type: "subtitles",
+        codec: "S_HDMV/PGS",
+        properties: { language: "eng", forced_track: true },
+      },
+      { id: 5, type: "subtitles", codec: "S_HDMV/PGS", properties: { language: "spa" } },
+    ],
+  });
+
+  // Two plain-eng tracks share a suffix and take 0 and 1; the forced-eng and
+  // spa tracks have distinct suffixes so each starts back at 0 — the numeral
+  // only ever disambiguates within a suffix.
+  assert.deepEqual(
+    tracks.map((track) => [track.trackId, track.stemIndex]),
+    [
+      [2, 0],
+      [3, 1],
+      [4, 0],
+      [5, 0],
+    ],
+  );
+});
+
+test("output names are stable when a subset of tracks is extracted", () => {
+  const [first, second] = parseMkvSubtitleTracks({
+    tracks: [
+      { id: 2, type: "subtitles", codec: "S_HDMV/PGS", properties: { language: "eng" } },
+      { id: 3, type: "subtitles", codec: "S_HDMV/PGS", properties: { language: "eng" } },
+    ],
+  });
+
+  const fullPlan = buildMkvExtractPlan("/tmp/movie.mkv", [first, second], "/tmp/out");
+  // Re-running with only the second track pending used to renumber it to
+  // position 0, writing its content over the first track's file.
+  const subsetPlan = buildMkvExtractPlan("/tmp/movie.mkv", [second], "/tmp/out");
+
+  assert.equal(fullPlan[0].output, join("/tmp/out", "movie.sup"));
+  assert.equal(fullPlan[1].output, join("/tmp/out", "movie1.sup"));
+  assert.equal(subsetPlan[0].output, fullPlan[1].output);
+});
+
+test("refuses a plan where two tracks resolve to the same output file", () => {
+  // stemIndex arrives over the network on the bridge path; two tracks carrying
+  // the same value would silently overwrite each other mid-extraction.
+  assert.throws(
+    () =>
+      buildMkvExtractPlan(
+        "/tmp/movie.mkv",
+        [
+          { trackId: 2, codec: "S_HDMV/PGS", languageCode: "eng", forcedTrack: false, stemIndex: 0 },
+          { trackId: 3, codec: "S_HDMV/PGS", languageCode: "eng", forcedTrack: false, stemIndex: 0 },
+        ],
+        "/tmp/out",
+      ),
+    /same output file/,
+  );
+});
+
 test("does not offer DVB subtitle tracks for extraction", () => {
   // DVB is not PGS. Extracting it to a .sup produced a file the OCR path
   // decoded to nothing and reported as a successful, empty conversion.

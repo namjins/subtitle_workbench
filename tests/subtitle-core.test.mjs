@@ -4,8 +4,22 @@ import {
   convertToSrt,
   outputNameFor,
   parseFps,
+  srtTime,
   toSrtDocument,
 } from "../lib/subtitle-core.mjs";
+
+test("srtTime never emits four-digit milliseconds at a second boundary", () => {
+  // Rounding the fraction after truncating the seconds carried to 1000ms and
+  // produced 00:00:59,1000, which srt-metrics (anchored on \d{3}$) cannot parse.
+  assert.equal(srtTime(59.9999), "00:01:00,000");
+  assert.equal(srtTime(5.9999), "00:00:06,000");
+  assert.equal(srtTime(3599.9997), "01:00:00,000");
+  assert.equal(srtTime(0), "00:00:00,000");
+  assert.equal(srtTime(15.974), "00:00:15,974");
+  // A non-numeric input is clamped to zero rather than yielding NaN:NaN:NaN.
+  assert.equal(srtTime(NaN), "00:00:00,000");
+  assert.equal(srtTime(-1), "00:00:00,000");
+});
 
 test("converts WebVTT cues to SRT", () => {
   const output = convertToSrt(

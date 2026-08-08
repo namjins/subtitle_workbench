@@ -60,3 +60,19 @@ jobs:
 
       - name: Dependency report
         run: node tools/subtitle-workbench.mjs doctor || true
+
+      # The desktop shell had zero automated verification — the Windows
+      # .cmd-resolution bug shipped precisely because nothing ever compiled
+      # src-tauri off the author's machine. A compile check is not a release
+      # build (signing/notarization stays deferred, see the roadmap), but it
+      # turns "it compiled once locally" into a standing guarantee on all
+      # three platforms.
+      - name: Install Tauri build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile-check the desktop shell
+        run: cargo check --manifest-path src-tauri/Cargo.toml

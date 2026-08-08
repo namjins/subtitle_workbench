@@ -47,11 +47,51 @@ fn bridge_invocations(port: u16) -> Vec<(String, Vec<String>)> {
     if std::path::Path::new(dev_cli).exists() {
         invocations.push(("node".to_string(), ui_args(vec![dev_cli.to_string()])));
     }
+    if cfg!(windows) {
+        // A global npm install on Windows writes subtitle-workbench.cmd — no
+        // .exe — and CreateProcessW only ever appends .exe to a bare name, so
+        // the invocation below this one can never find it there.
+        invocations.push(("subtitle-workbench.cmd".to_string(), ui_args(vec![])));
+    }
     invocations.push(("subtitle-workbench".to_string(), ui_args(vec![])));
     invocations
 }
 
+/// A double-clicked app inherits the login session's PATH, not the shell's:
+/// on macOS that is /usr/bin:/bin:/usr/sbin:/sbin, with no Homebrew, no nvm,
+/// no volta — so the Node a terminal user demonstrably has is invisible here.
+/// Prepend the standard install roots; directories that do not exist are
+/// harmless, and anything already on PATH still resolves as before.
+fn augmented_path() -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut roots: Vec<String> = Vec::new();
+    if cfg!(unix) {
+        roots.push("/opt/homebrew/bin".into());
+        roots.push("/usr/local/bin".into());
+        if let Ok(home) = std::env::var("HOME") {
+            roots.push(format!("{home}/.volta/bin"));
+            // nvm keeps one directory per Node version; take the newest.
+            if let Ok(entries) = std::fs::read_dir(format!("{home}/.nvm/versions/node")) {
+                let mut versions: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+                versions.sort();
+                if let Some(newest) = versions.last() {
+                    roots.push(format!("{}/bin", newest.display()));
+                }
+            }
+        }
+    }
+    if cfg!(windows) {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            roots.push(format!("{appdata}\\npm"));
+        }
+    }
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    roots.push(current);
+    roots.join(separator)
+}
+
 fn spawn_bridge(port: u16) -> Result<Child, String> {
+    let path = augmented_path();
     let mut failures = Vec::new();
     for (program, args) in bridge_invocations(port) {
         // stdin is a pipe we never write to: the bridge watches it and exits
@@ -59,6 +99,7 @@ fn spawn_bridge(port: u16) -> Result<Child, String> {
         // SIGKILL, where our own exit handler never runs.
         match Command::new(&program)
             .args(&args)
+            .env("PATH", &path)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
@@ -68,6 +109,9 @@ fn spawn_bridge(port: u16) -> Result<Child, String> {
             Err(error) => failures.push(format!("{program}: {error}")),
         }
     }
+    // The effective PATH is the single most useful diagnostic here: the usual
+    // cause is a GUI launch that never saw the shell profile's additions.
+    failures.push(format!("searched PATH: {path}"));
     Err(failures.join("\n"))
 }
 
@@ -158,7 +202,12 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        // Not .expect(): under windows_subsystem = "windows" a panic has no
+        // console to print to, and the user-facing dialog has already shown.
+        .unwrap_or_else(|error| {
+            eprintln!("error while building tauri application: {error}");
+            std::process::exit(1);
+        })
         .run(|app, event| {
             // The bridge must not outlive its window: it can read and write
             // files and spawn processes, so an orphaned copy listening on

@@ -39,7 +39,10 @@ export type BridgeVideoTrack = {
   format: "sub + idx" | "sup";
   defaultTrack: boolean;
   forcedTrack: boolean;
-  index: number;
+  // Per-suffix output-name counter assigned by the bridge over the full track
+  // list. It must round-trip back on extraction, or a subset extraction
+  // renumbers from 0 and overwrites a sibling track's file.
+  stemIndex: number;
 };
 
 // The bridge serves this bundle from its own origin, so requests are relative
@@ -51,7 +54,15 @@ const bridgeOrigin = import.meta.env.DEV ? "http://127.0.0.1:8765" : "";
 declare global {
   interface Window {
     __SUBTITLE_WORKBENCH_TOKEN__?: string;
+    // Injected by the bridge beside the token. The desktop shell renders
+    // whatever UI the installed npm package serves, so this is the only
+    // version identity the page actually has.
+    __SUBTITLE_WORKBENCH_VERSION__?: string;
   }
+}
+
+export function bridgeVersion(): string | null {
+  return (typeof window === "undefined" ? null : window.__SUBTITLE_WORKBENCH_VERSION__) ?? null;
 }
 
 /**
@@ -70,16 +81,66 @@ export type BridgeDoctorReport = {
     ready: boolean;
     binaryFailures: Array<{ name: string }>;
     languageFailures: Array<{ language: string }>;
+    // Tools that work but are lossier than they should be (e.g. Tesseract
+    // below the version floor). Present but previously undeclared, so the UI
+    // silently dropped them.
+    warnings?: Array<{ name: string; warning: string }>;
   };
   install: string[];
 };
+
+/**
+ * Read the bridge's JSON error body instead of discarding it. Every failure
+ * path on the bridge sends { error: "<reason>" }; rendering only the status
+ * turned "Uploaded file is too large" into "Local bridge upload returned 400".
+ */
+async function bridgeErrorFor(response: Response, fallback: string): Promise<Error> {
+  const body = await response.json().catch(() => null);
+  const message =
+    body && typeof body.error === "string" && body.error
+      ? body.error
+      : `${fallback} (HTTP ${response.status})`;
+  return new Error(message);
+}
+
+/**
+ * Pull the last diagnostic line out of a failed job's stderr. Two traps:
+ * the tail is usually noise (`FAILED movie.sup: node exited with 1`, the
+ * batch summary, and the runner's own generic message repeat there), and OCR
+ * progress lines can dominate. Walk backwards past the known-generic shapes
+ * to the first line that actually says something.
+ */
+function lastMeaningfulStderrLine(stderr: string): string | null {
+  const noise = [
+    /exited with \d+$/u,
+    /terminated by SIG\w+$/u,
+    /^FAILED [^:]+: /u,
+    /^\d+ of \d+ file\(s\) failed/u,
+    /^\d+ file\(s\) failed to convert\.?$/u,
+    /^OCR \d+\/\d+: /u,
+    /^Wrote \d+ cues to /u,
+    /^Starting /u,
+    /^Recognising \d+ distinct/u,
+    /^Probed \d+ frame/u,
+  ];
+  const lines = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (noise.some((pattern) => pattern.test(line))) continue;
+    return line;
+  }
+  return null;
+}
 
 export async function fetchBridgeDoctorReport(): Promise<BridgeDoctorReport> {
   const response = await fetch(`${bridgeOrigin}/doctor`, {
     headers: bridgeHeaders(),
   });
   if (!response.ok) {
-    throw new Error(`Dependency check failed with status ${response.status}.`);
+    throw await bridgeErrorFor(response, "Dependency check failed");
   }
   return response.json();
 }
@@ -87,19 +148,38 @@ export async function fetchBridgeDoctorReport(): Promise<BridgeDoctorReport> {
 export async function runBridgeJob(
   job: BridgeJob,
   onEvent: (event: BridgeEvent) => void,
+  options: { signal?: AbortSignal } = {},
 ) {
   const response = await fetch(`${bridgeOrigin}/jobs`, {
     method: "POST",
     headers: bridgeHeaders({ "content-type": "application/json" }),
     body: JSON.stringify(job),
+    signal: options.signal,
   });
   if (!response.ok || !response.body) {
-    throw new Error(`Local bridge returned ${response.status}`);
+    throw await bridgeErrorFor(response, "Local bridge job request failed");
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+
+  // Aborting the fetch is not enough to stop the job: WebKit can keep the
+  // aborted connection open (draining it for reuse), so the bridge never sees
+  // a close and the OCR tree runs on. The bridge-accepted event carries a job
+  // id for exactly this — on abort, tell the bridge explicitly. The close
+  // handler remains the backstop for a crashed or closed client.
+  let jobId: string | null = null;
+  const cancelOnBridge = () => {
+    if (!jobId) return;
+    void fetch(`${bridgeOrigin}/jobs/cancel`, {
+      method: "POST",
+      headers: bridgeHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ jobId }),
+      // Deliberately no signal: the cancel must outlive the aborted run.
+    }).catch(() => {});
+  };
+  options.signal?.addEventListener("abort", cancelOnBridge, { once: true });
 
   // The server writes HTTP 200 before the job starts, so response.ok says
   // nothing about whether it succeeded. Failures arrive as SSE events, and
@@ -107,11 +187,24 @@ export async function runBridgeJob(
   let failure: string | null = null;
 
   const handle = (event: BridgeEvent) => {
+    if (event.type === "bridge-accepted" && typeof event.jobId === "string") {
+      jobId = event.jobId;
+      // Stop clicked in the gap before the id arrived: cancel now.
+      if (options.signal?.aborted) cancelOnBridge();
+    }
     if (event.type === "bridge-error" || event.type === "job-failed") {
+      // job-failed and bridge-error both carry the runner's generic
+      // "<node> exited with 1" — the real reason (a tesseract error, missing
+      // traineddata) only travels in bridge-error's stderr. Prefer that.
+      const fromStderr =
+        typeof event.stderr === "string" && event.stderr
+          ? lastMeaningfulStderrLine(event.stderr)
+          : null;
       failure =
-        typeof event.error === "string" && event.error
+        fromStderr ??
+        (typeof event.error === "string" && event.error
           ? event.error
-          : "The local bridge reported a failed job.";
+          : "The local bridge reported a failed job.");
     }
     onEvent(event);
   };
@@ -133,22 +226,32 @@ export async function runBridgeJob(
     if (event) handle(event);
   }
 
+  // The job is over; a later abort (Clear queue after completion) has nothing
+  // to cancel.
+  options.signal?.removeEventListener("abort", cancelOnBridge);
+
   if (failure) throw new Error(failure);
 }
 
-export async function uploadBridgeFiles(files: File[]) {
+export async function uploadBridgeFiles(
+  files: File[],
+  options: { signal?: AbortSignal } = {},
+) {
   const formData = new FormData();
   for (const file of files) {
     formData.append("files", file, file.name);
   }
 
+  // The signal matters here too: uploads run before the job starts, so a Stop
+  // pressed during the upload phase would otherwise do nothing.
   const response = await fetch(`${bridgeOrigin}/uploads`, {
     method: "POST",
     headers: bridgeHeaders(),
     body: formData,
+    signal: options.signal,
   });
   if (!response.ok) {
-    throw new Error(`Local bridge upload returned ${response.status}`);
+    throw await bridgeErrorFor(response, "Local bridge upload failed");
   }
   return (await response.json()) as BridgeUpload;
 }
@@ -160,7 +263,7 @@ export async function pickBridgeFile(extensions: string[]) {
     body: JSON.stringify({ extensions }),
   });
   if (!response.ok) {
-    throw new Error(`Local bridge file picker returned ${response.status}`);
+    throw await bridgeErrorFor(response, "Local bridge file picker failed");
   }
   // A cancelled dialog comes back as { path: null } — a normal outcome the
   // caller should treat as "do nothing", not an error.
@@ -175,7 +278,7 @@ export async function revealBridgeFile(path: string) {
     body: JSON.stringify({ path }),
   });
   if (!response.ok) {
-    throw new Error(`Local bridge reveal returned ${response.status}`);
+    throw await bridgeErrorFor(response, "Local bridge reveal failed");
   }
 }
 
@@ -187,7 +290,7 @@ export async function pickBridgeFiles(extensions: string[]) {
     body: JSON.stringify({ extensions, multiple: true }),
   });
   if (!response.ok) {
-    throw new Error(`Local bridge file picker returned ${response.status}`);
+    throw await bridgeErrorFor(response, "Local bridge file picker failed");
   }
   const result = (await response.json()) as { files?: BridgePickedFile[] };
   return (result.files ?? []).filter((file) => Boolean(file.path));
@@ -200,7 +303,7 @@ export async function inspectBridgeVideo(input: string) {
     body: JSON.stringify({ input }),
   });
   if (!response.ok) {
-    throw new Error(`Local bridge video inspection returned ${response.status}`);
+    throw await bridgeErrorFor(response, "Local bridge video inspection failed");
   }
   return (await response.json()) as {
     input: string;
@@ -215,7 +318,7 @@ export async function extractBridgeVideo(input: string, tracks: BridgeVideoTrack
     body: JSON.stringify({ input, tracks }),
   });
   if (!response.ok) {
-    throw new Error(`Local bridge video extraction returned ${response.status}`);
+    throw await bridgeErrorFor(response, "Local bridge video extraction failed");
   }
   return (await response.json()) as {
     input: string;

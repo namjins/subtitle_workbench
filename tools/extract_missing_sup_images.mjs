@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { extractPgsImagesAtTimes } from "../lib/pgs-peek.mjs";
+import { parseArgv } from "../lib/cli-args.mjs";
 
 const usage = `
 Usage:
@@ -12,10 +13,14 @@ Reads a detailed benchmark report and extracts PNG images for missing or
 high-impact text-mismatch SUP cues.
 `;
 
+// This tool has no subcommand and is spawned flag-first, so parse from argv[2].
+const cli = parseArgv(process.argv, {
+  hasCommand: false,
+  valueOptions: new Set(["--details", "--out-dir", "--examples-dir", "--kind", "--tolerance", "--limit"]),
+});
+
 function option(name, fallback = null) {
-  const index = process.argv.indexOf(name);
-  if (index === -1) return fallback;
-  return process.argv[index + 1] ?? fallback;
+  return cli.option(name, fallback);
 }
 
 function safeName(value) {
@@ -77,7 +82,7 @@ function rowsWithTargets(rows, kind, limit) {
 }
 
 async function main() {
-  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  if (cli.has("--help") || cli.has("-h")) {
     process.stdout.write(usage);
     return;
   }

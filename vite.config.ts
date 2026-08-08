@@ -13,5 +13,9 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // The bridge allowlists exactly this origin under --dev. Without
+    // strictPort, a taken port 3000 silently moved Vite to 3001 and every
+    // bridge request then 403'd with "Cross-origin requests are not accepted".
+    strictPort: true,
   },
 });

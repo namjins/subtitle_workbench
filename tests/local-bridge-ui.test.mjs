@@ -1,8 +1,27 @@
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import test from "node:test";
+
+// fetch() forbids overriding the Host header, so a DNS-rebinding request must
+// be made with the raw http client.
+function rawGet(port, path, headers) {
+  return new Promise((resolvePromise, reject) => {
+    const req = httpRequest(
+      { host: "127.0.0.1", port, path, method: "GET", headers },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolvePromise({ status: res.statusCode, body }));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
 import {
   createLocalBridgeServer,
   resolveUiAssetPath,
@@ -57,6 +76,29 @@ test("never resolves a UI path outside the build directory", () => {
     resolveUiAssetPath(root, "/assets/index.js"),
     join(root, "assets", "index.js"),
   );
+});
+
+test("a non-loopback Host gets no page and, above all, no token", async () => {
+  const root = await buildUiRoot();
+  try {
+    await withServer(root, async (origin, token) => {
+      // DNS rebinding: the request reaches 127.0.0.1 but carries the
+      // attacker's hostname. The static path injects the session token into
+      // the HTML, so it must refuse before writing any of the body — a 403
+      // stapled after the token would still hand it to a same-origin framer.
+      const port = new URL(origin).port;
+      const response = await rawGet(port, "/", { host: "evil.example" });
+      assert.equal(response.status, 403);
+      assert.ok(token, "server should have minted a session token");
+      assert.ok(!response.body.includes(token), "response body must not contain the session token");
+      assert.ok(
+        !response.body.includes("__SUBTITLE_WORKBENCH_TOKEN__"),
+        "no token scaffold either",
+      );
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 test("serves the built UI and keeps the API reachable", async () => {

@@ -7,7 +7,7 @@ import tseslint from "typescript-eslint";
 // with a Node CLI/bridge alongside it, so there is no Next.js to configure for.
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", ".tmp/**"],
+    ignores: ["dist/**", "node_modules/**", ".tmp/**", "src-tauri/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

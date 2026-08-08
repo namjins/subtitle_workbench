@@ -3,6 +3,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { compareSrtFiles } from "../lib/srt-metrics.mjs";
+import { parseArgv } from "../lib/cli-args.mjs";
 
 const usage = `
 Usage:
@@ -16,10 +17,28 @@ The directory mode pairs every .sup or .idx in --examples-dir with a reference
 <basename>-eng.srt or <basename>.srt.
 `;
 
+// No subcommand — spawned flag-first, so parse from argv[2].
+const cli = parseArgv(process.argv, {
+  hasCommand: false,
+  valueOptions: new Set([
+    "--reference",
+    "--candidate",
+    "--examples-dir",
+    "--candidate-dir",
+    "--fixture-metadata",
+    "--csv",
+    "--details",
+    "--max-missing",
+    "--max-extra",
+    "--max-end-mismatches",
+    "--max-cer",
+    "--min-fixtures",
+    "--max-text-mismatches",
+  ]),
+});
+
 function option(name, fallback = null) {
-  const index = process.argv.indexOf(name);
-  if (index === -1) return fallback;
-  return process.argv[index + 1] ?? fallback;
+  return cli.option(name, fallback);
 }
 
 function numberOption(name) {
@@ -412,13 +431,13 @@ function evaluateQualityGate(total, missingCandidates, thresholds, comparedCount
 }
 
 async function main() {
-  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  if (cli.has("--help") || cli.has("-h")) {
     process.stdout.write(usage);
     return;
   }
 
-  const json = process.argv.includes("--json");
-  const timingFirst = process.argv.includes("--timing-first");
+  const json = cli.has("--json");
+  const timingFirst = cli.has("--timing-first");
   const reference = option("--reference");
   const candidate = option("--candidate");
   const examplesDir = option("--examples-dir");

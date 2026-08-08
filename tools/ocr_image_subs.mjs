@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { parseArgv } from "../lib/cli-args.mjs";
 import {
+  OUTPUT_REVISION,
   appVersion,
   conversionCacheKey,
   isCachedConversionStale,
@@ -17,8 +18,9 @@ import {
 import { installInstructionsForPlatform } from "../lib/dependency-doctor.mjs";
 import { cacheDirectory, hasCommand, imageMagickCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
-import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
-import { toSrtDocument } from "../lib/subtitle-core.mjs";
+import { createOcrEngine, isMacosVisionAvailable } from "../lib/ocr-tesseract.mjs";
+import { srtTime, toSrtDocument } from "../lib/subtitle-core.mjs";
+import { dedupeByHash, mapBounded } from "../lib/image-dedupe.mjs";
 import { countPgsDisplaySets, extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
 const usage = `
@@ -113,17 +115,6 @@ function checkBinaries(commands) {
     ].join("\n"),
   );
 }
-
-function secondsToSrtTime(seconds) {
-  const safe = Math.max(0, Number(seconds) || 0);
-  const hours = Math.floor(safe / 3600);
-  const minutes = Math.floor((safe % 3600) / 60);
-  const secs = Math.floor(safe % 60);
-  const millis = Math.round((safe - Math.floor(safe)) * 1000);
-  const pad = (value, size = 2) => String(value).padStart(size, "0");
-  return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${pad(millis, 3)}`;
-}
-
 
 async function imageStatsAsync(imagePath) {
   const output = await runAsync(imageMagickCommand() ?? "magick", [
@@ -250,7 +241,11 @@ async function extractSubIdxImages(input, workingDirectory, jobs) {
     Array.from({ length: Math.min(jobs, frames.length) }, () => worker()),
   );
 
-  return prepared.filter(Boolean);
+  // framesWritten distinguishes "ffmpeg read no subtitle data at all" (a
+  // damaged or wrong-format container) from "frames were rendered but every one
+  // was judged blank" (a rendering failure). The old code reported a literal
+  // "1 display set" for subidx, which asserted a count it never measured.
+  return { images: prepared.filter(Boolean), framesWritten: frames.length };
 }
 
 async function convert(
@@ -270,33 +265,70 @@ async function convert(
   await mkdir(scratchRoot, { recursive: true });
   await mkdir(dirname(output), { recursive: true });
   const workingDirectory = await mkdtemp(join(scratchRoot, "subtitle-ocr-"));
+  // Ownership marker for the bridge's stale-scratch sweep: a SIGKILL from the
+  // Stop button never runs the finally below, so orphaned directories are
+  // reclaimed at bridge startup — but only when their owner is dead and they
+  // were not kept on purpose.
+  await writeFile(join(workingDirectory, "owner.pid"), String(process.pid), "utf8");
 
   try {
-    const [packets, extractedImages] =
-      mode === "sup-to-srt"
-        ? [[], await extractPgsPreviewImages(input, workingDirectory, Infinity)]
-        : [[], await extractSubIdxImages(input, workingDirectory, jobs)];
+    let extractedImages;
+    let framesWritten;
+    if (mode === "sup-to-srt") {
+      extractedImages = await extractPgsPreviewImages(input, workingDirectory, Infinity);
+      framesWritten = extractedImages.length;
+    } else {
+      ({ images: extractedImages, framesWritten } = await extractSubIdxImages(
+        input,
+        workingDirectory,
+        jobs,
+      ));
+    }
     const images = limit === null ? extractedImages : extractedImages.slice(0, limit);
 
     if (!images.length) {
       // Distinguish "not a subtitle file we can read" from "a subtitle file
       // that genuinely shows nothing". Blank forced/overlay tracks are real —
       // several exist in the fixture corpus, with correctly empty reference
-      // SRTs — so failing on them would be wrong. Failing only when the
-      // container has no display sets at all still catches the damaged and
-      // wrong-format cases this check was added for.
-      const displaySets =
-        mode === "sup-to-srt" ? await countPgsDisplaySets(input) : 1;
-      if (!displaySets) {
+      // SRTs — so failing on them would be wrong.
+      if (mode === "sup-to-srt") {
+        const displaySets = await countPgsDisplaySets(input);
+        if (!displaySets) {
+          throw new Error(
+            `No subtitle data could be read from ${basename(input)}. ` +
+              "The file may be empty, damaged, or not the format this mode expects.",
+          );
+        }
+        await writeFile(output, toSrtDocument(""), "utf8");
+        process.stderr.write(
+          `Wrote 0 cues to ${output} (${displaySets} display set(s) contained no visible subtitles)\n`,
+        );
+        return;
+      }
+
+      // subidx: no display-set count exists, so use the frame count ffmpeg
+      // actually wrote.
+      if (!framesWritten) {
         throw new Error(
           `No subtitle data could be read from ${basename(input)}. ` +
             "The file may be empty, damaged, or not the format this mode expects.",
         );
       }
-
+      if (limit === null) {
+        // Frames were rendered and every one was judged blank. That is a
+        // rendering failure (a palette/ImageMagick regression), not an empty
+        // track — writing an empty SRT and exiting 0 here would be the
+        // "report success for work that did not happen" bug the project has
+        // removed three times. A --limit run is exempt: it may legitimately
+        // slice to nothing.
+        throw new Error(
+          `Extracted ${framesWritten} frame(s) from ${basename(input)} but every one was blank ` +
+            "after rendering. This is a rendering failure, not an empty subtitle track.",
+        );
+      }
       await writeFile(output, toSrtDocument(""), "utf8");
       process.stderr.write(
-        `Wrote 0 cues to ${output} (${displaySets} display set(s) contained no visible subtitles)\n`,
+        `Wrote 0 cues to ${output} (${framesWritten} frame(s), none visible after the --limit slice)\n`,
       );
       return;
     }
@@ -305,18 +337,12 @@ async function convert(
     const ocrByIndex = new Array(images.length);
 
     // Identical subtitle bitmaps recur within a track — a repeated sound cue,
-    // a held caption re-sent as its own display set. OCR is by far the most
-    // expensive step, and identical bytes cannot produce a different reading,
-    // so recognise one representative per distinct image and fan the result
-    // out. Measured at 8.6% of images on a full reference track.
-    const hashes = await Promise.all(images.map((image) => hashFile(image.path)));
-    const firstByHash = new Map();
-    const representatives = [];
-    hashes.forEach((hash, index) => {
-      if (firstByHash.has(hash)) return;
-      firstByHash.set(hash, index);
-      representatives.push(index);
-    });
+    // a held caption re-sent as its own display set. Measured at 8.6% of
+    // images on a full reference track. Hashing is bounded like every other
+    // loop here; the dedup bookkeeping lives in lib/image-dedupe.mjs where the
+    // index alignment is unit-tested.
+    const hashes = await mapBounded(images, jobs, (image) => hashFile(image.path));
+    const { representatives, firstByHash } = dedupeByHash(hashes);
 
     if (!quiet && representatives.length < images.length) {
       process.stderr.write(
@@ -344,7 +370,7 @@ async function convert(
 
     function storeResult(index, ocrResult) {
       const text = ocrResult.text;
-      const timing = packets[index] ?? {
+      const timing = {
         start: images[index].pts ?? index * 3,
         end:
           images[index].endPts ??
@@ -390,6 +416,32 @@ async function convert(
       );
     }
 
+    // A whole-engine failure — every recognition erroring out — must not be
+    // reported as a successful conversion. `blank-result` is excluded: a
+    // legitimately blank frame is not a failure. If every representative that
+    // ran carries a real engine failure, the recogniser never worked and the
+    // run must exit non-zero rather than write whatever empty SRT falls out.
+    const isEngineFailure = (warnings) =>
+      Array.isArray(warnings) &&
+      warnings.some(
+        (warning) =>
+          warning.startsWith("vision-failed") || warning === "vision-missing-result",
+      );
+    const engineFailures = representatives.filter((index) =>
+      isEngineFailure(ocrByIndex[index]?.warnings),
+    );
+    for (const index of engineFailures) {
+      for (const warning of ocrByIndex[index].warnings) {
+        process.stderr.write(`  ${warning}\n`);
+      }
+    }
+    if (representatives.length > 0 && engineFailures.length === representatives.length) {
+      throw new Error(
+        `Every image failed OCR (${engineFailures.length}/${representatives.length}); ` +
+          "the recogniser did not run. See the warnings above.",
+      );
+    }
+
     // Fan each recognised result back out to every image with the same bytes.
     images.forEach((image, index) => {
       const ocrResult = ocrByIndex[firstByHash.get(hashes[index])];
@@ -408,7 +460,7 @@ async function convert(
       .map((cue, index) =>
         [
           String(index + 1),
-          `${secondsToSrtTime(cue.start)} --> ${secondsToSrtTime(cue.end)}`,
+          `${srtTime(cue.start)} --> ${srtTime(cue.end)}`,
           cue.text,
         ].join("\n"),
       )
@@ -419,6 +471,8 @@ async function convert(
     process.stderr.write(`Wrote ${cues.length} cues to ${output}\n`);
   } finally {
     if (keepTemp) {
+      // The marker keeps the sweep's hands off a directory the user asked for.
+      await writeFile(join(workingDirectory, "kept-on-purpose"), "", "utf8").catch(() => {});
       process.stderr.write(`Kept temporary images in ${workingDirectory}\n`);
     } else {
       await rm(workingDirectory, { force: true, recursive: true });
@@ -501,13 +555,14 @@ async function main() {
 
   if (cacheable && !cli.has("--no-cache")) {
     const cached = await readCachedConversion(cacheKey);
-    // An entry produced by a different Tesseract is not what a fresh run would
-    // give, so it is a miss rather than a hit. Without this, upgrading the
-    // recogniser silently changes nothing for anything already converted.
-    if (cached && isCachedConversionStale(cached)) {
+    // An entry produced by a different Tesseract, an older output format, or a
+    // machine that has since gained Apple Vision is not what a fresh run would
+    // give, so it is a miss rather than a hit. Without this, upgrading
+    // silently changes nothing for anything already converted.
+    if (cached && isCachedConversionStale(cached, recogniserVersion(), isMacosVisionAvailable())) {
       process.stderr.write(
-        `Ignoring cached conversion: it was produced by ${cached.engineVersion}, ` +
-          `and ${recogniserVersion()} is installed now. Reconverting.\n`,
+        `Ignoring cached conversion from app version ${cached.appVersion} ` +
+          `(${cached.engineVersion}): the toolchain or output format has changed. Reconverting.\n`,
       );
     } else if (cached) {
       await mkdir(dirname(outputPath), { recursive: true });
@@ -548,9 +603,12 @@ async function main() {
     const srt = await readFile(outputPath, "utf8");
     await writeCachedConversion(cacheKey, {
       appVersion: appVersion(),
-      // Recorded so a later run can tell whether the recogniser has changed
-      // under it; see isCachedConversionStale.
+      // Recorded so a later run can tell whether the recogniser, the output
+      // format, or the available engine set has changed under it; see
+      // isCachedConversionStale.
       engineVersion: recogniserVersion(),
+      outputRevision: OUTPUT_REVISION,
+      visionAvailable: isMacosVisionAvailable(),
       mode,
       language,
       sourceName: basename(input),

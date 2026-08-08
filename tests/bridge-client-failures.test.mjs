@@ -14,27 +14,24 @@ const clientUrl = new URL("../app/localBridgeClient.ts", import.meta.url);
 test("the run handler has no simulated progress or success path", async () => {
   const workbench = await readFile(workbenchUrl, "utf8");
 
-  // The old fallthrough was three setTimeouts ending in setOcrRunStatus("complete").
+  // Zero, not one: the last timer was the extract panel's 28→65→100 animation
+  // against a non-streaming endpoint — fiction, and now removed. Any new timer
+  // in this component needs a very good reason; the honest treatment for an
+  // operation with no progress signal is the indeterminate meter.
   const timerBlocks = workbench.match(/window\.setTimeout\(/gu) ?? [];
-  assert.equal(
-    timerBlocks.length,
-    1,
-    "only the extract progress animation should use a timer",
-  );
-  assert.match(
-    workbench,
-    /window\.clearTimeout\(advanceProgress\)/u,
-    "the extract timer must be cancellable or a failure re-flips rows to extracting",
-  );
+  assert.equal(timerBlocks.length, 0, "no simulated progress timers");
 
-  // Filenames shown to the user must come from the CLI, never be predicted.
+  // Filenames shown to the user must come from the CLI, never be predicted —
+  // on both panels. The extract side re-grew a predicted list once.
   assert.doesNotMatch(workbench, /predictedSrtFiles/u);
+  assert.doesNotMatch(workbench, /extractFileBase/u);
   assert.doesNotMatch(
     workbench,
     /\$\{item\.name\}-\$\{item\.language\}\.srt/u,
-    "predicted names can never match the CLI's <base>.srt output",
+    "predicted names can never match the CLI's <base>-<lang>.srt output",
   );
   assert.match(workbench, /const visibleSrtFiles = completedSrtFiles;/u);
+  assert.match(workbench, /const visibleExtractFiles = completedExtractFiles;/u);
 });
 
 test("a failed run returns to idle rather than complete", async () => {
@@ -44,12 +41,15 @@ test("a failed run returns to idle rather than complete", async () => {
   assert.ok(start > 0, "expected startBatch");
   const body = workbench.slice(start, workbench.indexOf("\n  }\n", start));
 
-  const failurePath = body.slice(body.lastIndexOf("} catch (error) {"));
-  assert.ok(failurePath.length > 0, "expected a catch block in startBatch");
+  const catchStart = body.lastIndexOf("} catch (error) {");
+  assert.ok(catchStart > 0, "expected a catch block in startBatch");
+  const failurePath = body.slice(catchStart);
 
-  // The failure path must reset, not celebrate.
+  // The failure path must reset, not celebrate. It now *keeps* the outputs
+  // that did finish (the CLI deliberately converts the rest of a batch past a
+  // bad file) — which is only safe because the success banner and reveal
+  // button are gated on ocrRunStatus === "complete", asserted below.
   assert.match(failurePath, /setOcrRunStatus\("idle"\)/u);
-  assert.match(failurePath, /setCompletedSrtFiles\(\[\]\)/u);
   assert.doesNotMatch(failurePath, /setOcrRunStatus\("complete"\)/u);
 
   // Exactly one place may declare the run complete, and it is after the loop.
@@ -57,6 +57,15 @@ test("a failed run returns to idle rather than complete", async () => {
     (body.match(/setOcrRunStatus\("complete"\)/gu) ?? []).length,
     1,
     "success should be declared in exactly one place",
+  );
+
+  // The status gate that makes keeping partial outputs safe: the "ready"
+  // heading only renders in the complete state. Weakening this reopens
+  // "a failed run looks successful".
+  assert.match(
+    workbench,
+    /\{ocrRunStatus === "complete"\s*\n\s*\? "SRT files ready"/u,
+    "the success heading must stay gated on the complete status",
   );
 });
 

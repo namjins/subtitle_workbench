@@ -11,6 +11,7 @@ import {
   parseLanguageList,
 } from "../lib/batch-extract.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
+import { appVersion } from "../lib/conversion-cache.mjs";
 import { formatJobEvent } from "../lib/local-job-events.mjs";
 import { extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
@@ -19,16 +20,19 @@ const ocrScript = join(root, "tools", "ocr_image_subs.mjs");
 const benchmarkScript = join(root, "tools", "benchmark_ocr.mjs");
 const missingImagesScript = join(root, "tools", "extract_missing_sup_images.mjs");
 
+/** @typedef {Error & {exitStatus?: number}} CliError */
+
 const usage = `
 Subtitle Workbench CLI
 
 Usage:
+  subtitle-workbench --version
   subtitle-workbench ui [--port 8765] [--no-open]
   subtitle-workbench doctor [--json] [--lang eng] [--feature ocr|extract]
   subtitle-workbench extract-english <video-dir> [--languages eng,spa|--all-languages] [--jobs auto|4]
   subtitle-workbench peek-sup <file.sup> [--out-dir dir] [--count 3]
-  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--no-cache] [--quiet] [--json-events]
-  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--text-cleanup generic|fitted] [--skip-existing] [--no-cache] [--quiet] [--json-events]
+  subtitle-workbench sup-to-srt <files.sup...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command ./sidecar] [--text-cleanup generic|fitted] [--limit N] [--skip-existing] [--no-cache] [--keep-temp] [--quiet] [--json-events]
+  subtitle-workbench subidx-to-srt <files.idx...> [--lang eng] [--out file.srt] [--out-dir dir] [--jobs auto|4] [--ocr-engine auto] [--ocr-command ./sidecar] [--text-cleanup generic|fitted] [--limit N] [--skip-existing] [--no-cache] [--keep-temp] [--quiet] [--json-events]
   subtitle-workbench benchmark-ocr --reference reference.srt --candidate candidate.srt
   subtitle-workbench benchmark-ocr --examples-dir dir --candidate-dir dir [--csv out.csv] [--details out.json]
   subtitle-workbench inspect-missing-ocr --details benchmark-details.json --out-dir dir [--examples-dir dir] [--kind missing|text]
@@ -99,7 +103,7 @@ function run(command, args, options = {}) {
     throw new Error(`${command} failed: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    const error = new Error(`${command} exited with ${result.status}`);
+    const error = /** @type {CliError} */ (new Error(`${command} exited with ${result.status}`));
     error.exitStatus = result.status;
     throw error;
   }
@@ -113,7 +117,9 @@ function emitJobEvent(type, fields = {}) {
 
 async function extractEnglish() {
   const [videoDir] = positionalArgs();
-  if (!videoDir) throw new Error("No video directory provided.");
+  if (!videoDir) {
+    throw new Error("No video directory provided. Run `subtitle-workbench --help` for usage.");
+  }
 
   // Fail before scanning, with install help, rather than per file once the
   // batch is running. Silent when everything is present.
@@ -145,7 +151,7 @@ async function extractEnglish() {
   );
   // The shell version exited 0 even when every track failed.
   if (result.failures.length) {
-    const error = new Error(`${result.failures.length} file(s) failed to extract.`);
+    const error = /** @type {CliError} */ (new Error(`${result.failures.length} file(s) failed to extract.`));
     error.exitStatus = 1;
     throw error;
   }
@@ -153,7 +159,9 @@ async function extractEnglish() {
 
 async function imageOcr(mode) {
   const inputs = positionalArgs();
-  if (!inputs.length) throw new Error("No input file provided.");
+  if (!inputs.length) {
+    throw new Error("No input file provided. Run `subtitle-workbench --help` for usage.");
+  }
   const out = option("--out");
   const outDir = option("--out-dir");
   if (out && inputs.length > 1) {
@@ -236,7 +244,7 @@ async function imageOcr(mode) {
       `${failures.length} of ${inputs.length} file(s) failed:\n` +
         failures.map((item) => `  ${basename(item.input)}\n`).join(""),
     );
-    const error = new Error(`${failures.length} file(s) failed to convert.`);
+    const error = /** @type {CliError} */ (new Error(`${failures.length} file(s) failed to convert.`));
     error.exitStatus = 1;
     throw error;
   }
@@ -268,42 +276,64 @@ function doctor() {
     process.stdout.write(formatDoctorReport(report));
   }
   if (!report.summary.ready) {
-    const error = new Error("Missing required subtitle tool dependencies.");
+    const error = /** @type {CliError} */ (new Error("Missing required subtitle tool dependencies."));
     error.exitStatus = 1;
     throw error;
   }
 }
 
 async function startUi() {
-  const { createLocalBridgeServer } = await import("../lib/local-bridge-server.mjs");
+  const { createLocalBridgeServer, parseBridgePort } = await import(
+    "../lib/local-bridge-server.mjs"
+  );
+  const dev = hasFlag("--dev");
   const distDir = join(root, "dist");
-  if (!existsSync(join(distDir, "index.html"))) {
+  // Under --dev the UI is served by Vite, not from dist/, so a fresh clone
+  // must be able to start the bridge without a build. The check stays for the
+  // production path, where a missing dist/ means every request 404s.
+  if (!dev && !existsSync(join(distDir, "index.html"))) {
     throw new Error(
       "No built UI found in dist/. Run `npm run build` first, or use `npm run app`.",
     );
   }
 
-  const port = Number(option("--port", process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT ?? "8765"));
+  const port = parseBridgePort(option("--port") ?? process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT);
   const host = process.env.SUBTITLE_WORKBENCH_BRIDGE_HOST ?? "127.0.0.1";
   // Under `npm run dev` the page is served by Vite on another port, so it has
   // no injected token. Allowlisting that origin is opt-in and never on by
   // default, because it widens what may talk to the bridge.
-  const devOrigins = hasFlag("--dev")
-    ? ["http://localhost:3000", "http://127.0.0.1:3000"]
-    : [];
+  const devOrigins = dev ? ["http://localhost:3000", "http://127.0.0.1:3000"] : [];
   const server = createLocalBridgeServer({
     devOrigins,
-    token: hasFlag("--dev") ? null : undefined,
+    ...(dev ? { uiRoot: null } : {}),
+    token: dev ? null : undefined,
   });
 
-  await new Promise((resolvePromise) => server.listen(port, host, resolvePromise));
-  const url = `http://${host}:${port}/`;
-  process.stderr.write(`Subtitle Workbench is running at ${url}\n`);
-  if (hasFlag("--dev")) {
-    process.stderr.write("Development mode: accepting requests from the Vite dev origin.\n");
+  // Reclaim scratch directories orphaned by a killed conversion. Fire and
+  // forget: a failed sweep must never stop the bridge from starting.
+  import("../lib/scratch-sweep.mjs")
+    .then(({ sweepStaleScratch }) => sweepStaleScratch())
+    .catch(() => {});
+
+  await new Promise((resolvePromise) =>
+    server.listen(port, host, () => resolvePromise(undefined)),
+  );
+  // In dev the page lives on the Vite origin — pointing the banner (and the
+  // browser below) at the bridge would open {"error":"Not found"}.
+  const url = dev ? "http://localhost:3000/" : `http://${host}:${port}/`;
+  process.stderr.write(
+    dev
+      ? `Subtitle Workbench bridge is running on http://${host}:${port}/ — open the UI at ${url} (npm run dev)\n`
+      : `Subtitle Workbench is running at ${url}\n`,
+  );
+  if (dev) {
+    process.stderr.write(
+      "Development mode: no session token — any local process can drive this bridge. Do not use outside development.\n",
+    );
   }
 
   if (!hasFlag("--no-open")) {
+    /** @type {[string, string[]]} */
     const opener =
       process.platform === "darwin"
         ? ["open", [url]]
@@ -331,7 +361,9 @@ async function startUi() {
 
 async function peekSup() {
   const [input] = positionalArgs();
-  if (!input) throw new Error("No SUP file provided.");
+  if (!input) {
+    throw new Error("No SUP file provided. Run `subtitle-workbench --help` for usage.");
+  }
   const outDir = resolve(option("--out-dir", "./sup-preview"));
   const count = Number(option("--count", "3"));
   const previews = await extractPgsPreviewImages(resolve(input), outDir, count);
@@ -345,7 +377,12 @@ async function peekSup() {
 
 async function main() {
   const command = cli.command;
-  if (!command || command === "--help" || command === "-h") {
+  // --version / -v works both as the command and as a flag on any command.
+  if (command === "--version" || command === "-v" || hasFlag("--version") || hasFlag("-v")) {
+    process.stdout.write(`${appVersion()}\n`);
+    return;
+  }
+  if (!command || command === "--help" || command === "-h" || hasFlag("--help")) {
     process.stdout.write(usage);
     return;
   }
@@ -367,11 +404,11 @@ async function main() {
   } else if (command === "inspect-missing-ocr") {
     inspectMissingOcr();
   } else {
-    throw new Error(`Unknown command: ${command}`);
+    throw new Error(`Unknown command: ${command}. Run \`subtitle-workbench --help\` for usage.`);
   }
 }
 
 main().catch((error) => {
   process.stderr.write(`${error.message}\n`);
-  process.exit(error.exitStatus ?? 1);
+  process.exit(/** @type {CliError} */ (error).exitStatus ?? 1);
 });

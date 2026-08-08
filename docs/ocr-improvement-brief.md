@@ -3,7 +3,7 @@
 External brief on improving OCR for bitmap subtitle formats, kept for
 historical context. Its premise has since been largely resolved without a
 neural engine: per-image preprocessing repairs took portable VobSub from
-16.68% to 2.47% CER against Vision's 1.83% (see RUNNING_NOTES baselines).
+16.68% to 2.47% CER against Vision's 1.83% (recorded in the maintainer's working notes, not published with this repo).
 It is a proposal, not a description of this codebase.
 
 `docs/ocr-engine-evaluation.md` is the distilled version with decisions applied.

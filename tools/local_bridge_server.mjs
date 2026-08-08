@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { createLocalBridgeServer } from "../lib/local-bridge-server.mjs";
+import { createLocalBridgeServer, parseBridgePort } from "../lib/local-bridge-server.mjs";
 
-const port = Number(process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT ?? process.argv[2] ?? 8765);
+const port = parseBridgePort(process.env.SUBTITLE_WORKBENCH_BRIDGE_PORT ?? process.argv[2]);
 const host = process.env.SUBTITLE_WORKBENCH_BRIDGE_HOST ?? "127.0.0.1";
 
 const server = createLocalBridgeServer();

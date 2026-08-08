@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { detectSafeJobs, maxAutomaticJobs } from "../lib/cpu-jobs.mjs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  parseBridgePort,
   safeUploadName,
+  uniqueUploadName,
+  validateExtractRequest,
   validateJob,
   validatePickRequest,
+  validateRevealRequest,
   windowsPickScript,
   writeSse,
 } from "../lib/local-bridge-server.mjs";
@@ -132,6 +139,86 @@ test("clamps a network-supplied job count", () => {
     jobs: 10000,
   });
   assert.ok(job.jobs <= maxAutomaticJobs, `expected clamped jobs, got ${job.jobs}`);
+});
+
+test("rejects an outDir that looks like an option, on both endpoints", () => {
+  // outDir reaches a spawned tool; a value like "-rf" must never arrive as a
+  // flag. inputs were already guarded; outDir was the gap.
+  assert.throws(
+    () => validateJob({ command: "sup-to-srt", inputs: ["/tmp/movie.sup"], outDir: "-rf" }),
+    /not an option/u,
+  );
+  assert.throws(
+    () =>
+      validateExtractRequest({
+        input: "/tmp/movie.mkv",
+        tracks: [{ trackId: 2, codec: "S_VOBSUB" }],
+        outDir: "--output",
+      }),
+    /not an option/u,
+  );
+});
+
+test("rejects a non-integer or negative stemIndex on extract requests", () => {
+  const send = (stemIndex) =>
+    validateExtractRequest({
+      input: "/tmp/movie.mkv",
+      tracks: [{ trackId: 2, codec: "S_VOBSUB", stemIndex }],
+    });
+  // stemIndex is interpolated into the output filename; a bad value could
+  // collapse two tracks onto one file.
+  assert.throws(() => send(-1), /non-negative integer/u);
+  assert.throws(() => send(1.5), /non-negative integer/u);
+  assert.throws(() => send("0"), /non-negative integer/u);
+  // A well-formed request passes it through.
+  assert.equal(
+    send(2).tracks[0].stemIndex,
+    2,
+  );
+});
+
+test("reveal refuses anything but an absolute path to an existing file", () => {
+  // One of only two paths where network data reaches an OS binary. The three
+  // invariants — absolute, exists, is a file — are exactly what a refactor
+  // quietly loosens.
+  const dir = mkdtempSync(join(tmpdir(), "subtitle-workbench-reveal-"));
+  try {
+    const file = join(dir, "movie.srt");
+    writeFileSync(file, "1\n");
+
+    assert.deepEqual(validateRevealRequest({ path: file }), { path: file });
+    assert.throws(() => validateRevealRequest({ path: "relative/movie.srt" }), /absolute/iu);
+    assert.throws(() => validateRevealRequest({ path: dir }), /existing file/iu);
+    assert.throws(() => validateRevealRequest({ path: join(dir, "missing.srt") }), /existing file/iu);
+    assert.throws(() => validateRevealRequest({}), /absolute/iu);
+    assert.throws(() => validateRevealRequest(null), /absolute/iu);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("suffixes colliding upload names instead of overwriting", () => {
+  // Two files named movie.idx in one upload must not overwrite each other
+  // before a conversion reads them.
+  const used = new Map();
+  assert.equal(uniqueUploadName("movie.idx", used), "movie.idx");
+  assert.equal(uniqueUploadName("movie.idx", used), "movie-2.idx");
+  assert.equal(uniqueUploadName("movie.idx", used), "movie-3.idx");
+  assert.equal(uniqueUploadName("movie.sub", used), "movie.sub");
+  assert.equal(uniqueUploadName("no-extension", used), "no-extension");
+  assert.equal(uniqueUploadName("no-extension", used), "no-extension-2");
+});
+
+test("parses and validates a bridge port", () => {
+  assert.equal(parseBridgePort("9000"), 9000);
+  assert.equal(parseBridgePort(undefined), 8765);
+  assert.equal(parseBridgePort(""), 8765);
+  assert.equal(parseBridgePort("0"), 0);
+  // NaN used to reach listen(), which then bound a random port and printed a
+  // http://127.0.0.1:NaN/ banner.
+  assert.throws(() => parseBridgePort("abc"), /Invalid port/u);
+  assert.throws(() => parseBridgePort("70000"), /Invalid port/u);
+  assert.throws(() => parseBridgePort("-1"), /Invalid port/u);
 });
 
 test("validates pick requests, including multi-select", () => {
