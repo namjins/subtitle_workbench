@@ -164,12 +164,34 @@ export async function runBridgeJob(
   const decoder = new TextDecoder();
   let buffer = "";
 
+  // Aborting the fetch is not enough to stop the job: WebKit can keep the
+  // aborted connection open (draining it for reuse), so the bridge never sees
+  // a close and the OCR tree runs on. The bridge-accepted event carries a job
+  // id for exactly this — on abort, tell the bridge explicitly. The close
+  // handler remains the backstop for a crashed or closed client.
+  let jobId: string | null = null;
+  const cancelOnBridge = () => {
+    if (!jobId) return;
+    void fetch(`${bridgeOrigin}/jobs/cancel`, {
+      method: "POST",
+      headers: bridgeHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ jobId }),
+      // Deliberately no signal: the cancel must outlive the aborted run.
+    }).catch(() => {});
+  };
+  options.signal?.addEventListener("abort", cancelOnBridge, { once: true });
+
   // The server writes HTTP 200 before the job starts, so response.ok says
   // nothing about whether it succeeded. Failures arrive as SSE events, and
   // ignoring them is what let a failed run render as a completed one.
   let failure: string | null = null;
 
   const handle = (event: BridgeEvent) => {
+    if (event.type === "bridge-accepted" && typeof event.jobId === "string") {
+      jobId = event.jobId;
+      // Stop clicked in the gap before the id arrived: cancel now.
+      if (options.signal?.aborted) cancelOnBridge();
+    }
     if (event.type === "bridge-error" || event.type === "job-failed") {
       // job-failed and bridge-error both carry the runner's generic
       // "<node> exited with 1" — the real reason (a tesseract error, missing
@@ -203,6 +225,10 @@ export async function runBridgeJob(
     const event = parseSseEvent(buffer);
     if (event) handle(event);
   }
+
+  // The job is over; a later abort (Clear queue after completion) has nothing
+  // to cancel.
+  options.signal?.removeEventListener("abort", cancelOnBridge);
 
   if (failure) throw new Error(failure);
 }

@@ -178,6 +178,85 @@ test("rejects an oversized upload from its declared length before buffering", as
   });
 });
 
+test("an explicit cancel aborts the job and frees its slot", async () => {
+  // Connection close is not a sufficient cancel signal: WebKit can keep an
+  // aborted fetch's connection open to drain it, so the bridge never sees a
+  // close and the OCR tree runs on. /jobs/cancel is the explicit path.
+  let jobSignal = null;
+  const runJob = (job, options) =>
+    new Promise((_, rejectJob) => {
+      jobSignal = options.signal;
+      options.signal.addEventListener("abort", () => {
+        const error = new Error("Job cancelled.");
+        error.cancelled = true;
+        error.result = { stderr: "" };
+        rejectJob(error);
+      });
+    });
+
+  await withServer(
+    async (origin, token) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-subtitle-workbench-token": token,
+      };
+      const response = await fetch(`${origin}/jobs`, {
+        method: "POST",
+        headers,
+        body: jobBody(),
+      });
+      assert.equal(response.status, 200);
+
+      // Read the stream just far enough to learn the job id. writeSse emits
+      // the `event:` and `data:` lines as separate writes, so a single read
+      // can return half an event — accumulate like the real client does.
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accepted = "";
+      while (!accepted.includes('"jobId"') || !accepted.includes("\n\n")) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accepted += decoder.decode(value, { stream: true });
+      }
+      const jobId = accepted.match(/"jobId":"([^"]+)"/u)?.[1];
+      assert.ok(jobId, `expected a jobId in: ${accepted}`);
+
+      // Cancel without a token must be refused; the job must stay alive.
+      const denied = await fetch(`${origin}/jobs/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      assert.equal(denied.status, 403);
+      assert.equal(jobSignal.aborted, false);
+
+      const cancelled = await fetch(`${origin}/jobs/cancel`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jobId }),
+      });
+      assert.deepEqual(await cancelled.json(), { cancelled: true });
+      assert.equal(jobSignal.aborted, true);
+
+      // Drain the stream to its end so the connection is released — a
+      // half-read streaming response would hold server.close() open forever.
+      for (;;) {
+        const { done } = await reader.read().catch(() => ({ done: true }));
+        if (done) break;
+      }
+
+      // The slot is released: cancelling again finds nothing.
+      const again = await fetch(`${origin}/jobs/cancel`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jobId }),
+      });
+      assert.deepEqual(await again.json(), { cancelled: false });
+    },
+    { runJob },
+  );
+});
+
 test("serves the dependency report to authorized callers only", async () => {
   await withServer(async (origin, token) => {
     // No token: the report fingerprints the machine (installed tools,
