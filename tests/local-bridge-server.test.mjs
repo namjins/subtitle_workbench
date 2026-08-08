@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { detectSafeJobs, maxAutomaticJobs } from "../lib/cpu-jobs.mjs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   parseBridgePort,
   safeUploadName,
+  uniqueUploadName,
   validateExtractRequest,
   validateJob,
   validatePickRequest,
+  validateRevealRequest,
   windowsPickScript,
   writeSse,
 } from "../lib/local-bridge-server.mjs";
@@ -170,6 +175,38 @@ test("rejects a non-integer or negative stemIndex on extract requests", () => {
     send(2).tracks[0].stemIndex,
     2,
   );
+});
+
+test("reveal refuses anything but an absolute path to an existing file", () => {
+  // One of only two paths where network data reaches an OS binary. The three
+  // invariants — absolute, exists, is a file — are exactly what a refactor
+  // quietly loosens.
+  const dir = mkdtempSync(join(tmpdir(), "subtitle-workbench-reveal-"));
+  try {
+    const file = join(dir, "movie.srt");
+    writeFileSync(file, "1\n");
+
+    assert.deepEqual(validateRevealRequest({ path: file }), { path: file });
+    assert.throws(() => validateRevealRequest({ path: "relative/movie.srt" }), /absolute/iu);
+    assert.throws(() => validateRevealRequest({ path: dir }), /existing file/iu);
+    assert.throws(() => validateRevealRequest({ path: join(dir, "missing.srt") }), /existing file/iu);
+    assert.throws(() => validateRevealRequest({}), /absolute/iu);
+    assert.throws(() => validateRevealRequest(null), /absolute/iu);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("suffixes colliding upload names instead of overwriting", () => {
+  // Two files named movie.idx in one upload must not overwrite each other
+  // before a conversion reads them.
+  const used = new Map();
+  assert.equal(uniqueUploadName("movie.idx", used), "movie.idx");
+  assert.equal(uniqueUploadName("movie.idx", used), "movie-2.idx");
+  assert.equal(uniqueUploadName("movie.idx", used), "movie-3.idx");
+  assert.equal(uniqueUploadName("movie.sub", used), "movie.sub");
+  assert.equal(uniqueUploadName("no-extension", used), "no-extension");
+  assert.equal(uniqueUploadName("no-extension", used), "no-extension-2");
 });
 
 test("parses and validates a bridge port", () => {
