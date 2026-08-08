@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  OUTPUT_REVISION,
   appVersion,
   conversionCacheKey,
   isCachedConversionStale,
@@ -55,6 +56,49 @@ test("an entry from a different recogniser is stale, but a missing one is not", 
   assert.equal(isCachedConversionStale({}, v55), false);
   assert.equal(isCachedConversionStale({ engineVersion: "" }, v55), false);
   assert.equal(isCachedConversionStale(null, v55), false);
+});
+
+test("an entry from an older output revision is stale; the current one is not", () => {
+  const v55 = "tesseract v5.5.3.20260724";
+  // Entries predating the field were written at revision 0, so they reconvert
+  // exactly once when the revision is first bumped — never before.
+  assert.equal(
+    isCachedConversionStale({ engineVersion: v55, outputRevision: OUTPUT_REVISION }, v55),
+    false,
+  );
+  assert.equal(
+    isCachedConversionStale({ engineVersion: v55, outputRevision: OUTPUT_REVISION - 1 }, v55),
+    true,
+  );
+});
+
+test("gaining Apple Vision invalidates; losing it never does", () => {
+  const v55 = "tesseract v5.5.3.20260724";
+  const entry = { engineVersion: v55, outputRevision: OUTPUT_REVISION };
+
+  // Gained: the better engine should reconvert the library.
+  assert.equal(isCachedConversionStale({ ...entry, visionAvailable: false }, v55, true), true);
+  // Unchanged either way: not stale.
+  assert.equal(isCachedConversionStale({ ...entry, visionAvailable: true }, v55, true), false);
+  assert.equal(isCachedConversionStale({ ...entry, visionAvailable: false }, v55, false), false);
+  // Lost: a finished conversion must survive an uninstall (module docblock).
+  assert.equal(isCachedConversionStale({ ...entry, visionAvailable: true }, v55, false), false);
+  // Absent recorded value is unknown, not "lost" — it never invalidates, and
+  // it keeps this check machine-independent for pre-existing entries.
+  assert.equal(isCachedConversionStale(entry, v55, true), false);
+  assert.equal(isCachedConversionStale(entry, v55, null), false);
+});
+
+test("keys are deterministic across runs", async () => {
+  await withTempCache(async (dir) => {
+    const source = join(dir, "movie.sup");
+    await writeFile(source, "bytes");
+    const first = await conversionCacheKey({ ...baseOptions, sourcePaths: [source] });
+    const second = await conversionCacheKey({ ...baseOptions, sourcePaths: [source] });
+    // A nondeterministic key would miss every run and grow the cache without
+    // bound; nothing else guards against that.
+    assert.equal(first, second);
+  });
 });
 
 test("keys by content, not by name or location", async () => {

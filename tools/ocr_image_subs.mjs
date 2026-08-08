@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { parseArgv } from "../lib/cli-args.mjs";
 import {
+  OUTPUT_REVISION,
   appVersion,
   conversionCacheKey,
   isCachedConversionStale,
@@ -17,7 +18,7 @@ import {
 import { installInstructionsForPlatform } from "../lib/dependency-doctor.mjs";
 import { cacheDirectory, hasCommand, imageMagickCommand } from "../lib/platform-paths.mjs";
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
-import { createOcrEngine } from "../lib/ocr-tesseract.mjs";
+import { createOcrEngine, isMacosVisionAvailable } from "../lib/ocr-tesseract.mjs";
 import { toSrtDocument } from "../lib/subtitle-core.mjs";
 import { countPgsDisplaySets, extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
@@ -501,13 +502,14 @@ async function main() {
 
   if (cacheable && !cli.has("--no-cache")) {
     const cached = await readCachedConversion(cacheKey);
-    // An entry produced by a different Tesseract is not what a fresh run would
-    // give, so it is a miss rather than a hit. Without this, upgrading the
-    // recogniser silently changes nothing for anything already converted.
-    if (cached && isCachedConversionStale(cached)) {
+    // An entry produced by a different Tesseract, an older output format, or a
+    // machine that has since gained Apple Vision is not what a fresh run would
+    // give, so it is a miss rather than a hit. Without this, upgrading
+    // silently changes nothing for anything already converted.
+    if (cached && isCachedConversionStale(cached, recogniserVersion(), isMacosVisionAvailable())) {
       process.stderr.write(
-        `Ignoring cached conversion: it was produced by ${cached.engineVersion}, ` +
-          `and ${recogniserVersion()} is installed now. Reconverting.\n`,
+        `Ignoring cached conversion from app version ${cached.appVersion} ` +
+          `(${cached.engineVersion}): the toolchain or output format has changed. Reconverting.\n`,
       );
     } else if (cached) {
       await mkdir(dirname(outputPath), { recursive: true });
@@ -548,9 +550,12 @@ async function main() {
     const srt = await readFile(outputPath, "utf8");
     await writeCachedConversion(cacheKey, {
       appVersion: appVersion(),
-      // Recorded so a later run can tell whether the recogniser has changed
-      // under it; see isCachedConversionStale.
+      // Recorded so a later run can tell whether the recogniser, the output
+      // format, or the available engine set has changed under it; see
+      // isCachedConversionStale.
       engineVersion: recogniserVersion(),
+      outputRevision: OUTPUT_REVISION,
+      visionAvailable: isMacosVisionAvailable(),
       mode,
       language,
       sourceName: basename(input),

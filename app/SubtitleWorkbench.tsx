@@ -41,6 +41,9 @@ type ExtractTrack = {
   format: "sub + idx" | "sup";
   defaultTrack: boolean;
   forcedTrack: boolean;
+  // Bridge-assigned output-name counter; must be sent back on extraction so
+  // subset extractions keep the same file names as full ones.
+  stemIndex: number;
   status: ExtractStatus;
   progress: number;
 };
@@ -499,7 +502,10 @@ export function SubtitleWorkbench() {
           format: track.format,
           defaultTrack: track.defaultTrack,
           forcedTrack: track.forcedTrack,
-          index: 0,
+          // The bridge names outputs from this counter. Sending the real value
+          // (not a subset position) is what keeps a partial extraction from
+          // overwriting a sibling track's file.
+          stemIndex: track.stemIndex,
         })),
       );
       window.clearTimeout(advanceProgress);

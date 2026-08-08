@@ -3,6 +3,7 @@ import test from "node:test";
 import { detectSafeJobs, maxAutomaticJobs } from "../lib/cpu-jobs.mjs";
 import {
   safeUploadName,
+  validateExtractRequest,
   validateJob,
   validatePickRequest,
   windowsPickScript,
@@ -132,6 +133,42 @@ test("clamps a network-supplied job count", () => {
     jobs: 10000,
   });
   assert.ok(job.jobs <= maxAutomaticJobs, `expected clamped jobs, got ${job.jobs}`);
+});
+
+test("rejects an outDir that looks like an option, on both endpoints", () => {
+  // outDir reaches a spawned tool; a value like "-rf" must never arrive as a
+  // flag. inputs were already guarded; outDir was the gap.
+  assert.throws(
+    () => validateJob({ command: "sup-to-srt", inputs: ["/tmp/movie.sup"], outDir: "-rf" }),
+    /not an option/u,
+  );
+  assert.throws(
+    () =>
+      validateExtractRequest({
+        input: "/tmp/movie.mkv",
+        tracks: [{ trackId: 2, codec: "S_VOBSUB" }],
+        outDir: "--output",
+      }),
+    /not an option/u,
+  );
+});
+
+test("rejects a non-integer or negative stemIndex on extract requests", () => {
+  const send = (stemIndex) =>
+    validateExtractRequest({
+      input: "/tmp/movie.mkv",
+      tracks: [{ trackId: 2, codec: "S_VOBSUB", stemIndex }],
+    });
+  // stemIndex is interpolated into the output filename; a bad value could
+  // collapse two tracks onto one file.
+  assert.throws(() => send(-1), /non-negative integer/u);
+  assert.throws(() => send(1.5), /non-negative integer/u);
+  assert.throws(() => send("0"), /non-negative integer/u);
+  // A well-formed request passes it through.
+  assert.equal(
+    send(2).tracks[0].stemIndex,
+    2,
+  );
 });
 
 test("validates pick requests, including multi-select", () => {

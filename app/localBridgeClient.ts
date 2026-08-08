@@ -39,7 +39,10 @@ export type BridgeVideoTrack = {
   format: "sub + idx" | "sup";
   defaultTrack: boolean;
   forcedTrack: boolean;
-  index: number;
+  // Per-suffix output-name counter assigned by the bridge over the full track
+  // list. It must round-trip back on extraction, or a subset extraction
+  // renumbers from 0 and overwrites a sibling track's file.
+  stemIndex: number;
 };
 
 // The bridge serves this bundle from its own origin, so requests are relative
