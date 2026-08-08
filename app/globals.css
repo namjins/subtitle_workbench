@@ -744,6 +744,32 @@ h2 {
   transition: width 240ms ease;
 }
 
+/* Indeterminate variant for operations with no progress signal (extraction,
+   single-file OCR). A sweeping band, honestly saying "working" rather than
+   inventing a percentage. */
+.progress-meter.indeterminate {
+  position: relative;
+}
+
+.progress-meter.indeterminate::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--success);
+  animation: progress-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 .result-actions {
   display: flex;
   flex-wrap: wrap;

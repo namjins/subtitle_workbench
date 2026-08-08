@@ -284,8 +284,12 @@ async function startUi() {
   const { createLocalBridgeServer, parseBridgePort } = await import(
     "../lib/local-bridge-server.mjs"
   );
+  const dev = hasFlag("--dev");
   const distDir = join(root, "dist");
-  if (!existsSync(join(distDir, "index.html"))) {
+  // Under --dev the UI is served by Vite, not from dist/, so a fresh clone
+  // must be able to start the bridge without a build. The check stays for the
+  // production path, where a missing dist/ means every request 404s.
+  if (!dev && !existsSync(join(distDir, "index.html"))) {
     throw new Error(
       "No built UI found in dist/. Run `npm run build` first, or use `npm run app`.",
     );
@@ -296,19 +300,32 @@ async function startUi() {
   // Under `npm run dev` the page is served by Vite on another port, so it has
   // no injected token. Allowlisting that origin is opt-in and never on by
   // default, because it widens what may talk to the bridge.
-  const devOrigins = hasFlag("--dev")
-    ? ["http://localhost:3000", "http://127.0.0.1:3000"]
-    : [];
+  const devOrigins = dev ? ["http://localhost:3000", "http://127.0.0.1:3000"] : [];
   const server = createLocalBridgeServer({
     devOrigins,
-    token: hasFlag("--dev") ? null : undefined,
+    ...(dev ? { uiRoot: null } : {}),
+    token: dev ? null : undefined,
   });
 
+  // Reclaim scratch directories orphaned by a killed conversion. Fire and
+  // forget: a failed sweep must never stop the bridge from starting.
+  import("../lib/scratch-sweep.mjs")
+    .then(({ sweepStaleScratch }) => sweepStaleScratch())
+    .catch(() => {});
+
   await new Promise((resolvePromise) => server.listen(port, host, resolvePromise));
-  const url = `http://${host}:${port}/`;
-  process.stderr.write(`Subtitle Workbench is running at ${url}\n`);
-  if (hasFlag("--dev")) {
-    process.stderr.write("Development mode: accepting requests from the Vite dev origin.\n");
+  // In dev the page lives on the Vite origin — pointing the banner (and the
+  // browser below) at the bridge would open {"error":"Not found"}.
+  const url = dev ? "http://localhost:3000/" : `http://${host}:${port}/`;
+  process.stderr.write(
+    dev
+      ? `Subtitle Workbench bridge is running on http://${host}:${port}/ — open the UI at ${url} (npm run dev)\n`
+      : `Subtitle Workbench is running at ${url}\n`,
+  );
+  if (dev) {
+    process.stderr.write(
+      "Development mode: no session token — any local process can drive this bridge. Do not use outside development.\n",
+    );
   }
 
   if (!hasFlag("--no-open")) {

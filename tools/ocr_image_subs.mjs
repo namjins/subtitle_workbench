@@ -265,6 +265,11 @@ async function convert(
   await mkdir(scratchRoot, { recursive: true });
   await mkdir(dirname(output), { recursive: true });
   const workingDirectory = await mkdtemp(join(scratchRoot, "subtitle-ocr-"));
+  // Ownership marker for the bridge's stale-scratch sweep: a SIGKILL from the
+  // Stop button never runs the finally below, so orphaned directories are
+  // reclaimed at bridge startup — but only when their owner is dead and they
+  // were not kept on purpose.
+  await writeFile(join(workingDirectory, "owner.pid"), String(process.pid), "utf8");
 
   try {
     let extractedImages;
@@ -466,6 +471,8 @@ async function convert(
     process.stderr.write(`Wrote ${cues.length} cues to ${output}\n`);
   } finally {
     if (keepTemp) {
+      // The marker keeps the sweep's hands off a directory the user asked for.
+      await writeFile(join(workingDirectory, "kept-on-purpose"), "", "utf8").catch(() => {});
       process.stderr.write(`Kept temporary images in ${workingDirectory}\n`);
     } else {
       await rm(workingDirectory, { force: true, recursive: true });

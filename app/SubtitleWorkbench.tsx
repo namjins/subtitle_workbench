@@ -131,11 +131,6 @@ function languageName(code?: string) {
   return languageOptions.find(([value]) => value === code)?.[1] ?? code ?? "";
 }
 
-function extractFileBase(videoName: string, trackIndex: number) {
-  const name = videoName.replace(/\.[^.]+$/i, "") || "subtitles";
-  return trackIndex === 0 ? name : `${name}${trackIndex}`;
-}
-
 function fileNameFromPath(path: string) {
   return path.split(/[\\/]/u).filter(Boolean).pop() ?? "";
 }
@@ -223,26 +218,42 @@ export function SubtitleWorkbench() {
     names: string[];
     install: string[];
   } | null>(null);
+  // Non-blocking: tools that work but are lossier than they should be (e.g.
+  // Tesseract below the version floor). Previously fetched and dropped, so a
+  // 5.4 install looked green while quietly dropping low-contrast cues.
+  const [dependencyWarnings, setDependencyWarnings] = useState<string[]>([]);
+
+  async function refreshDoctorReport() {
+    try {
+      const report = await fetchBridgeDoctorReport();
+      setMissingDependencies(
+        report.summary.ready
+          ? null
+          : {
+              names: [
+                ...report.summary.binaryFailures.map((failure) => failure.name),
+                ...report.summary.languageFailures.map(
+                  (failure) => `tesseract language "${failure.language}"`,
+                ),
+              ],
+              install: report.install,
+            },
+      );
+      setDependencyWarnings(
+        (report.summary.warnings ?? []).map(
+          (warning) => `${warning.name}: ${warning.warning}`,
+        ),
+      );
+    } catch {
+      // Bridge unreachable or an old bridge without /doctor: show nothing —
+      // conversions surface their own errors.
+    }
+  }
 
   useEffect(() => {
-    let cancelled = false;
-    fetchBridgeDoctorReport()
-      .then((report) => {
-        if (cancelled || report.summary.ready) return;
-        setMissingDependencies({
-          names: [
-            ...report.summary.binaryFailures.map((failure) => failure.name),
-            ...report.summary.languageFailures.map(
-              (failure) => `tesseract language "${failure.language}"`,
-            ),
-          ],
-          install: report.install,
-        });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    void refreshDoctorReport();
+    // Startup-only by design; the banner's Re-check button re-runs it after
+    // the user installs something.
   }, []);
   const [extractStage, setExtractStage] = useState<ExtractStage>("intake");
   const [extractVideoName, setExtractVideoName] = useState("");
@@ -263,6 +274,10 @@ export function SubtitleWorkbench() {
   // job that finishes after the user switched tools cannot write its output
   // into the new tool's panel.
   const runToken = useRef(0);
+  // The in-flight run's AbortController. runToken stops results landing in the
+  // wrong panel, but only aborting the fetch makes the bridge kill the child
+  // process tree — without it, "Clear queue" left tesseract workers running.
+  const runAbort = useRef<AbortController | null>(null);
   const batchFileInputRef = useRef<HTMLInputElement | null>(null);
   const extractFileInputRef = useRef<HTMLInputElement | null>(null);
   const [applyLanguageToBatch, setApplyLanguageToBatch] = useState(false);
@@ -274,7 +289,6 @@ export function SubtitleWorkbench() {
   const [bridgeError, setBridgeError] = useState("");
   const [jobs, setJobs] = useState(detectSafeBrowserJobs);
   const isSubtitleTool = active === "sup" || active === "subidx";
-  const isOcrTool = isSubtitleTool;
   const subtitleToolTitle = active === "subidx" ? "SUB/IDX to SRT" : "SUP to SRT";
   const subtitleToolDescription =
     active === "subidx"
@@ -289,7 +303,7 @@ export function SubtitleWorkbench() {
     (item) => item.selected && item.kind === active,
   );
   const queueStepIndex = queueSteps.findIndex(([step]) => step === queueStep);
-  const unresolvedBatchItems = isOcrTool
+  const unresolvedBatchItems = isSubtitleTool
     ? activeBatchItems.filter((item) => !item.language)
     : [];
   const batchLanguages = Array.from(
@@ -322,23 +336,18 @@ export function SubtitleWorkbench() {
     return tracks.length > 0 && tracks.every(isTrackSelected);
   };
   const extractStepIndex = queueSteps.findIndex(([step]) => step === extractStage);
-  const extractRunning = selectedExtractTracks.some((track) =>
+  // Derived from ALL tracks, not the selected subset: deselecting everything
+  // mid-run used to hide the progress panel and re-enable Run, letting a
+  // second mkvextract start against the same output paths.
+  const extractRunning = extractTracks.some((track) =>
     ["queued", "extracting"].includes(track.status),
   );
   const extractComplete =
     !!selectedExtractTracks.length &&
     selectedExtractTracks.every((track) => track.status === "complete");
-  const extractProgress = selectedExtractTracks.length
-    ? Math.round(
-        selectedExtractTracks.reduce((total, track) => total + track.progress, 0) /
-          selectedExtractTracks.length,
-      )
-    : 0;
-  const extractOutputFiles = selectedExtractTracks.flatMap((track, index) => {
-    const fileBase = extractFileBase(extractVideoName, index);
-    return track.format === "sub + idx" ? [`${fileBase}.sub`, `${fileBase}.idx`] : [`${fileBase}.sup`];
-  });
-  const visibleExtractFiles = completedExtractFiles.length ? completedExtractFiles : extractOutputFiles;
+  // Only ever real paths reported by the CLI, mirroring visibleSrtFiles. The
+  // predicted list this replaces produced names the extractor never writes.
+  const visibleExtractFiles = completedExtractFiles;
 
   function selectExtractVideo(file?: File) {
     const path = (file as (File & { path?: string }) | undefined)?.path ?? "";
@@ -401,6 +410,24 @@ export function SubtitleWorkbench() {
     const file = (await filesFromDrop(event.dataTransfer)).find((item) =>
       item.name.toLowerCase().endsWith(".mkv"),
     );
+    if (!file) {
+      // A stray .srt or a folder used to fall through to
+      // selectExtractVideo(undefined), which silently threw away a reviewed
+      // track list with zero feedback.
+      setBridgeError("That is not an MKV file. Extraction currently supports MKV only.");
+      return;
+    }
+    const path = (file as File & { path?: string }).path ?? "";
+    if (!path) {
+      // A plain browser drop never carries the file's location, so the bridge
+      // cannot read it in place. Send the user straight to the picker that
+      // does work instead of showing an error loop.
+      setBridgeError(
+        "Dropped files do not include their location in a browser. Opening Browse instead — it reads the MKV in place without copying it.",
+      );
+      await handleExtractBrowse();
+      return;
+    }
     selectExtractVideo(file);
   }
 
@@ -424,7 +451,10 @@ export function SubtitleWorkbench() {
       setSelectedExtractTrackIds(tracks.map((track) => track.id));
       setExtractStage("review");
     } catch (error) {
-      setBridgeError(error instanceof Error ? error.message : "Video inspection failed.");
+      // Through the shared translator like every other handler: "Failed to
+      // fetch" (bridge down) and ENOENT (mkvmerge not installed) both have
+      // better messages than the raw error text.
+      setBridgeError(bridgeFailureMessage(error));
     }
   }
 
@@ -457,37 +487,24 @@ export function SubtitleWorkbench() {
 
   async function startAllExtractTracks() {
     const firstPending = selectedExtractTracks.find((track) => track.status !== "complete");
-    if (!firstPending || !extractVideoPath) return;
+    if (!firstPending || !extractVideoPath || extractRunning) return;
     setExtractStage("run");
     setBridgeError("");
     setCompletedExtractFiles([]);
+    // No progress numbers: /videos/extract is a single blocking request with
+    // no progress signal, and the 28→65→100 animation this replaces was
+    // fiction — a 40-minute UHD extraction sat at "65%" for its whole run.
+    // The rows show an indeterminate "extracting" state instead.
     setExtractTracks((tracks) =>
       tracks.map((track) => {
         if (!selectedExtractTrackIds.includes(track.id)) return track;
         if (track.status === "complete") return track;
-        return track.id === firstPending.id
-          ? { ...track, status: "extracting", progress: 28 }
-          : { ...track, status: "queued", progress: 0 };
+        return { ...track, status: "extracting", progress: 0 };
       }),
     );
-    // Held so the catch below can cancel it. Previously this timer was left
-    // running, so a bridge failure that arrived within 500ms reset the rows to
-    // "ready" and then the timer flipped them back to "extracting" at 65%,
-    // wedging the UI with no way forward except clearing the queue.
     runToken.current += 1;
     const token = runToken.current;
     const isCurrentRun = () => runToken.current === token;
-
-    const advanceProgress = window.setTimeout(() => {
-      if (!isCurrentRun()) return;
-      setExtractTracks((tracks) =>
-        tracks.map((track) =>
-          selectedExtractTrackIds.includes(track.id) && track.status !== "complete"
-            ? { ...track, status: "extracting", progress: 65 }
-            : track,
-        ),
-      );
-    }, 500);
 
     try {
       const result = await extractBridgeVideo(
@@ -508,7 +525,6 @@ export function SubtitleWorkbench() {
           stemIndex: track.stemIndex,
         })),
       );
-      window.clearTimeout(advanceProgress);
       if (!isCurrentRun()) return;
       setCompletedExtractFiles(result.outputs);
       setExtractTracks((tracks) =>
@@ -519,7 +535,6 @@ export function SubtitleWorkbench() {
         ),
       );
     } catch (error) {
-      window.clearTimeout(advanceProgress);
       if (!isCurrentRun()) return;
       setBridgeError(bridgeFailureMessage(error));
       setCompletedExtractFiles([]);
@@ -621,19 +636,40 @@ export function SubtitleWorkbench() {
   }
 
   function installBatchItems(items: BatchItem[]) {
-    // Replace only this tool's queue. The whole array used to be overwritten,
-    // so adding SUP files silently discarded a SUB/IDX or ITT queue the user
-    // had already built up in another tab.
-    setBatchItems((existing) => [
-      ...existing.filter((item) => item.kind !== active),
-      ...items,
-    ]);
+    // Merge into this tool's queue rather than replacing it: the banner says
+    // "Added to queue", and replacing meant a second drag-in silently discarded
+    // the first batch along with its assigned languages. Matching is by name
+    // (ids carry the intake index, so the same file gets a different id per
+    // drop). A match keeps the existing row — and re-selects it, so re-adding
+    // a file the user just removed works — but refreshes its file handles.
+    setBatchItems((existing) => {
+      const merged = existing.filter((item) => item.kind !== active);
+      const currentByName = new Map(
+        existing
+          .filter((item) => item.kind === active)
+          .map((item) => [item.name, item]),
+      );
+      for (const incoming of items) {
+        const match = currentByName.get(incoming.name);
+        if (match) {
+          currentByName.set(incoming.name, {
+            ...match,
+            selected: true,
+            files: incoming.files,
+            sourcePath: incoming.sourcePath ?? match.sourcePath,
+            previews: incoming.previews?.length ? incoming.previews : match.previews,
+          });
+        } else {
+          currentByName.set(incoming.name, incoming);
+        }
+      }
+      return [...merged, ...currentByName.values()];
+    });
     setOcrRunStatus("idle");
     setOcrProgress(0);
     setOcrEtaSeconds(0);
     setCompletedSrtFiles([]);
     setBridgeError("");
-    setSelectedBatchLanguages([]);
   }
 
   /**
@@ -693,8 +729,18 @@ export function SubtitleWorkbench() {
     await loadSubtitleFiles(await filesFromDrop(event.dataTransfer));
   }
 
+  function stopBatch() {
+    // Aborting the fetch closes the request, which is what makes the bridge
+    // kill the spawned process group; bumping the token alone only detached
+    // the UI while the workers kept burning CPU.
+    runAbort.current?.abort();
+    runAbort.current = null;
+  }
+
   function resetBatch() {
     runToken.current += 1;
+    runAbort.current?.abort();
+    runAbort.current = null;
     // Clearing is also per-tool, for the same reason.
     setBatchItems((existing) => existing.filter((item) => item.kind !== active));
     setBatchLanguageId(null);
@@ -710,6 +756,8 @@ export function SubtitleWorkbench() {
 
   function resetExtract() {
     runToken.current += 1;
+    runAbort.current?.abort();
+    runAbort.current = null;
     setExtractVideoName("");
     setExtractVideoPath("");
     setExtractTracks([]);
@@ -720,7 +768,7 @@ export function SubtitleWorkbench() {
   }
 
   function openBatchLanguage(index = 0) {
-    if (!isOcrTool) return;
+    if (!isSubtitleTool) return;
     const target = activeBatchItems[index];
     if (!target) return;
     setBatchLanguageId(target.id);
@@ -729,7 +777,7 @@ export function SubtitleWorkbench() {
   }
 
   function confirmBatchLanguage(language = ocrLanguage) {
-    if (!isOcrTool) return;
+    if (!isSubtitleTool) return;
     if (batchLanguageId === null) return;
     const target = activeBatchItems.find((item) => item.id === batchLanguageId);
     if (!target) return;
@@ -737,9 +785,11 @@ export function SubtitleWorkbench() {
       items.map((item) => {
         if (!item.selected) return item;
         if (item.kind !== target.kind) return item;
-        if (applyLanguageToBatch || item.id === target.id) {
-          return { ...item, language };
-        }
+        if (item.id === target.id) return { ...item, language };
+        // "Apply to remaining" fills only items with no language yet. The
+        // label promises "Existing language choices stay unchanged", and the
+        // unguarded version silently rewrote a Dutch file to English.
+        if (applyLanguageToBatch && !item.language) return { ...item, language };
         return item;
       }),
     );
@@ -755,6 +805,19 @@ export function SubtitleWorkbench() {
     setBatchItems((items) =>
       items.map((item) => (item.id === id ? { ...item, selected: false } : item)),
     );
+    // Back to idle: after a completed run, deleting a row used to leave the
+    // panel stuck on "SRT files ready" with no Run button, so the only way
+    // forward was discarding the whole queue.
+    setOcrRunStatus("idle");
+    // Prune selections to languages still present — a language whose last file
+    // was just removed otherwise stayed selected but un-rendered, and so could
+    // never be unchecked.
+    const remainingLanguages = new Set(
+      remainingActiveItems.flatMap((item) => (item.language ? [item.language] : [])),
+    );
+    setSelectedBatchLanguages((languages) =>
+      languages.filter((language) => remainingLanguages.has(language)),
+    );
     if (!remainingActiveItems.length) {
       setBatchLanguageId(null);
       setQueueStep("intake");
@@ -763,10 +826,12 @@ export function SubtitleWorkbench() {
 
   async function startBatch() {
     if (ocrRunStatus === "running") return;
-    if (isOcrTool && !selectedBatchLanguages.length) return;
+    if (isSubtitleTool && !selectedBatchLanguages.length) return;
     runToken.current += 1;
     const token = runToken.current;
     const isCurrentRun = () => runToken.current === token;
+    const abort = new AbortController();
+    runAbort.current = abort;
 
     setOcrRunStatus("running");
     setOcrProgress(0);
@@ -778,13 +843,20 @@ export function SubtitleWorkbench() {
           (item) => item.language && selectedBatchLanguages.includes(item.language),
         );
     let bridgeItems = runnableBatchItems.filter((item) => item.sourcePath);
+    // Declared outside the try so the catch can report what *did* finish: the
+    // CLI is deliberately partial-tolerant, and clearing these on failure told
+    // the user a 40-file batch produced nothing while 39 SRTs sat on disk.
+    const outputs: string[] = [];
+    let totalFiles = 0;
     try {
       if (bridgeItems.length !== runnableBatchItems.length) {
         const uploadItems = runnableBatchItems.filter((item) => !item.sourcePath && item.files?.length);
         if (uploadItems.length) {
           const uploadedItems = await Promise.all(
             uploadItems.map(async (item) => {
-              const uploaded = await uploadBridgeFiles(item.files ?? []);
+              const uploaded = await uploadBridgeFiles(item.files ?? [], {
+                signal: abort.signal,
+              });
               const uploadedPaths = new Map(uploaded.files.map((file) => [file.name, file.path]));
               const idxPath = item.files
                 ?.map((file) => uploadedPaths.get(file.name))
@@ -832,7 +904,6 @@ export function SubtitleWorkbench() {
         );
       }
 
-      const outputs: string[] = [];
       const groups = new Map<string, BatchItem[]>();
       for (const item of bridgeItems) {
         groups.set(item.language ?? "eng", [...(groups.get(item.language ?? "eng") ?? []), item]);
@@ -840,7 +911,7 @@ export function SubtitleWorkbench() {
       // Progress is per file, from the CLI's own job-finished events. It used
       // to be per language group, so a 40-file single-language batch sat at 0%
       // and then jumped straight to 100%.
-      const totalFiles = bridgeItems.length;
+      totalFiles = bridgeItems.length;
       let finishedFiles = 0;
       const startedAt = Date.now();
 
@@ -883,6 +954,7 @@ export function SubtitleWorkbench() {
               );
             }
           },
+          { signal: abort.signal },
         );
       }
 
@@ -894,17 +966,30 @@ export function SubtitleWorkbench() {
       // A run the user has already navigated away from must not write its
       // failure into whatever panel is on screen now.
       if (!isCurrentRun()) return;
+      const stopped = error instanceof DOMException && error.name === "AbortError";
       // Every failure path lands here and stops. There used to be a fallthrough
       // to a setTimeout chain that ended in `complete` at 100%, so a run that
       // produced no files at all — including one that never reached the bridge
-      // — was reported as a success.
-      setBridgeError(bridgeFailureMessage(error));
+      // — was reported as a success. A user-initiated Stop is not a bridge
+      // failure and reads as its own message.
+      setBridgeError(
+        stopped
+          ? `Run stopped. ${outputs.length} of ${totalFiles} file(s) had finished.`
+          : totalFiles > 0
+            ? `${bridgeFailureMessage(error)} ${outputs.length} of ${totalFiles} file(s) converted.`
+            : bridgeFailureMessage(error),
+      );
       setOcrProgress(0);
       setOcrEtaSeconds(0);
-      setCompletedSrtFiles([]);
+      // Keep what did finish: the CLI deliberately converts the rest of a
+      // batch past a bad file, and those SRTs are on disk. Only the success
+      // banner is gated on "complete", so this cannot read as a full success.
+      setCompletedSrtFiles([...outputs]);
       // Back to idle, not complete: the queue is intact so the run can be
       // retried once the bridge is reachable.
       setOcrRunStatus("idle");
+    } finally {
+      if (runAbort.current === abort) runAbort.current = null;
     }
   }
 
@@ -925,6 +1010,8 @@ export function SubtitleWorkbench() {
   function selectTool(toolId: ToolId) {
     // Any run still in flight belongs to the tool we are leaving.
     runToken.current += 1;
+    runAbort.current?.abort();
+    runAbort.current = null;
     setActive(toolId);
     setDragTarget(null);
     setBridgeError("");
@@ -955,14 +1042,29 @@ export function SubtitleWorkbench() {
         <section className="dependency-warning" role="alert">
           <strong>Some required tools are missing:</strong>{" "}
           {missingDependencies.names.join(", ")}. Conversions that need them
-          will fail until they are installed.
+          will fail until they are installed. Only English OCR data is checked
+          here; other languages are verified when a conversion runs.
           <pre>{missingDependencies.install.join("\n")}</pre>
+          <button type="button" onClick={() => void refreshDoctorReport()}>
+            Re-check
+          </button>
+        </section>
+      ) : null}
+
+      {!missingDependencies && dependencyWarnings.length ? (
+        <section className="dependency-warning dependency-warning-soft" role="status">
+          <strong>Working, but worth fixing:</strong>{" "}
+          {dependencyWarnings.join(" ")}
+          <button type="button" onClick={() => void refreshDoctorReport()}>
+            Re-check
+          </button>
         </section>
       ) : null}
 
       <section className="tool-grid" aria-label="Subtitle tools">
         {tools.map((tool) => (
           <button
+            aria-pressed={tool.id === active}
             className={tool.id === active ? "tool-card active" : "tool-card"}
             key={tool.id}
             onClick={() => selectTool(tool.id)}
@@ -991,14 +1093,16 @@ export function SubtitleWorkbench() {
 
                   <ol className="batch-tabs" aria-label="Extract steps">
                     {queueSteps.map(([step, label], index) => (
-                      <button
-                        className={extractStepClass(index)}
-                        key={step}
-                        type="button"
-                        onClick={() => setExtractStage(step)}
-                      >
-                        {extractQueueStepLabels[step] ?? label}
-                      </button>
+                      <li key={step} style={{ display: "contents" }}>
+                        <button
+                          className={extractStepClass(index)}
+                          type="button"
+                          disabled={step !== "intake" && !extractTracks.length}
+onClick={() => setExtractStage(step)}
+                        >
+                          {extractQueueStepLabels[step] ?? label}
+                        </button>
+                      </li>
                     ))}
                   </ol>
 
@@ -1020,7 +1124,14 @@ export function SubtitleWorkbench() {
                         event.preventDefault();
                         setDragTarget("extract");
                       }}
-                      onDragLeave={() => setDragTarget(null)}
+                      onDragLeave={(event) => {
+                        // Fires for every child crossing (the Browse button, the
+                        // filename span), which strobed the highlight. Only clear
+                        // when the pointer actually leaves the zone.
+                        if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                          setDragTarget(null);
+                        }
+                      }}
                       onDrop={handleExtractDrop}
                     >
                       <button
@@ -1038,7 +1149,7 @@ export function SubtitleWorkbench() {
                         type="file"
                       />
                       <span>{extractVideoName || "No file selected."}</span>
-                      <small>or drop an MKV here</small>
+                      <small>or drop an MKV here — if its location cannot be read, Browse opens instead</small>
                     </div>
 		                    <p className="supported-copy">
 		                      Currently tested with MKV files. Extraction uses the
@@ -1100,17 +1211,19 @@ export function SubtitleWorkbench() {
 		                  </div>
 		                  <ol className="batch-tabs" aria-label="Extract steps">
 		                    {queueSteps.map(([step, label], index) => (
-		                      <button
-		                        className={extractStepClass(index)}
-		                        key={step}
-		                        type="button"
-		                        onClick={() => setExtractStage(step)}
-		                      >
-		                        {extractQueueStepLabels[step] ?? label}
-		                        {step === "review" && extractTracks.length ? (
-		                          <span className="tab-badge">{extractTracks.length}</span>
-		                        ) : null}
-		                      </button>
+		                      <li key={step} style={{ display: "contents" }}>
+  		                      <button
+  		                        className={extractStepClass(index)}
+  		                        type="button"
+  		                        disabled={step !== "intake" && !extractTracks.length}
+onClick={() => setExtractStage(step)}
+  		                      >
+  		                        {extractQueueStepLabels[step] ?? label}
+  		                        {step === "review" && extractTracks.length ? (
+  		                          <span className="tab-badge">{extractTracks.length}</span>
+  		                        ) : null}
+  		                      </button>
+		                      </li>
 		                    ))}
 		                  </ol>
 		                  <p className="file-name-row">File name: {extractVideoName}</p>
@@ -1142,6 +1255,7 @@ export function SubtitleWorkbench() {
 		                            <label className="language-checkbox" key={language.code}>
 		                              <input
 		                                checked={isLanguageFullySelected(language.code)}
+		                                disabled={extractRunning}
 		                                onChange={() => toggleExtractLanguage(language.code)}
 		                                type="checkbox"
 		                              />
@@ -1216,6 +1330,7 @@ export function SubtitleWorkbench() {
 		                            <label key={language.code}>
 		                              <input
 		                                checked={isLanguageFullySelected(language.code)}
+		                                disabled={extractRunning}
 		                                onChange={() => toggleExtractLanguage(language.code)}
 		                                type="checkbox"
 		                              />
@@ -1229,15 +1344,21 @@ export function SubtitleWorkbench() {
 		                          </label>
 		                        )}
 		                      </div>
-		                      <label className="fps-control compact">
+		                      <label className="fps-control compact" title="Parallel OCR workers. Defaults to one less than your CPU count.">
 		                        <span>Jobs</span>
 		                        <input
 		                          min="1"
-		                          max="12"
+		                          max="16"
 		                          step="1"
 		                          type="number"
 		                          value={jobs}
-		                          onChange={(event) => setJobs(Number(event.target.value))}
+		                          disabled={extractRunning}
+		                          onChange={(event) => {
+		                            const next = Number(event.target.value);
+		                            // Clearing the field yields NaN, which React warns about and
+		                            // renders blank; keep the last value instead.
+		                            if (Number.isFinite(next)) setJobs(Math.max(1, Math.min(16, next)));
+		                          }}
 		                        />
 		                      </label>
 		                      <div className="start-batch-box">
@@ -1251,11 +1372,11 @@ export function SubtitleWorkbench() {
 		                        </h2>
 		                        {extractRunning ? (
 		                          <div className="ocr-progress-panel">
-		                            {bridgeError ? <p>{bridgeError}</p> : null}
-		                            <div className="progress-meter" aria-label="Extraction progress">
-		                              <span style={{ width: `${extractProgress}%` }} />
-		                            </div>
-		                            <p>{extractProgress}% complete</p>
+		                            {/* No percentage: the extract endpoint reports no progress,
+		                                and inventing one was the simulated animation this codebase
+		                                removed. */}
+		                            <div className="progress-meter indeterminate" role="progressbar" aria-label="Extraction running" />
+		                            <p>Extracting… this can take several minutes for large tracks.</p>
 		                          </div>
 		                        ) : extractComplete ? (
 		                          <>
@@ -1306,17 +1427,19 @@ export function SubtitleWorkbench() {
 
                 <ol className="batch-tabs" aria-label="Queue steps">
                   {queueSteps.map(([step, label], index) => (
-                    <button
-                      className={queueStepClass(index)}
-                      key={step}
-                      type="button"
-                      onClick={() => setQueueStep(step)}
-                    >
-	                      {label}
-                      {step === "review" && activeBatchItems.length ? (
-                        <span className="tab-badge">{activeBatchItems.length}</span>
-                      ) : null}
-                    </button>
+                    <li key={step} style={{ display: "contents" }}>
+                      <button
+                        className={queueStepClass(index)}
+                        type="button"
+                        disabled={step !== "intake" && !activeBatchItems.length}
+onClick={() => setQueueStep(step)}
+                      >
+  	                      {label}
+                        {step === "review" && activeBatchItems.length ? (
+                          <span className="tab-badge">{activeBatchItems.length}</span>
+                        ) : null}
+                      </button>
+                    </li>
                   ))}
                 </ol>
 
@@ -1339,7 +1462,14 @@ export function SubtitleWorkbench() {
                         event.preventDefault();
                         setDragTarget("subtitles");
                       }}
-                      onDragLeave={() => setDragTarget(null)}
+                      onDragLeave={(event) => {
+                        // Fires for every child crossing (the Browse button, the
+                        // filename span), which strobed the highlight. Only clear
+                        // when the pointer actually leaves the zone.
+                        if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                          setDragTarget(null);
+                        }
+                      }}
                       onDrop={handleSubtitleDrop}
                     >
                       <button
@@ -1389,7 +1519,7 @@ export function SubtitleWorkbench() {
 	                        language. Use Assign language on each row.
 	                      </p>
 	                    ) : null}
-	                    {isOcrTool && currentBatchItem ? (
+	                    {isSubtitleTool && currentBatchItem ? (
                       <div className="queue-language-panel">
                         <div className="queue-language-head">
                           <div>
@@ -1496,7 +1626,7 @@ export function SubtitleWorkbench() {
 	                              <small>{languageName(item.language)}</small>
 	                            ) : null}
 	                            <div className="queue-item-actions">
-	                              {isOcrTool ? (
+	                              {isSubtitleTool ? (
 	                                <button
 	                                  type="button"
 	                                  onClick={() => openBatchLanguage(index)}
@@ -1566,15 +1696,21 @@ export function SubtitleWorkbench() {
 		                        </label>
 		                      )}
 		                    </div>
-		                    <label className="fps-control compact">
+		                    <label className="fps-control compact" title="Parallel OCR workers. Defaults to one less than your CPU count.">
 		                      <span>Jobs</span>
 		                      <input
 		                        min="1"
-		                        max="12"
+		                        max="16"
 		                        step="1"
 		                        type="number"
 		                        value={jobs}
-		                        onChange={(event) => setJobs(Number(event.target.value))}
+		                        disabled={ocrRunStatus === "running"}
+		                        onChange={(event) => {
+		                          const next = Number(event.target.value);
+		                          // Clearing the field yields NaN, which React warns about and
+		                          // renders blank; keep the last value instead.
+		                          if (Number.isFinite(next)) setJobs(Math.max(1, Math.min(16, next)));
+		                        }}
 		                      />
 		                    </label>
 		                    <div className="start-batch-box">
@@ -1587,28 +1723,53 @@ export function SubtitleWorkbench() {
 	                      </h2>
                       {ocrRunStatus === "running" ? (
                         <div className="ocr-progress-panel">
-                          {bridgeError ? <p>{bridgeError}</p> : null}
-	                          <div
-                            className="progress-meter"
-                            role="progressbar"
-                            aria-label="OCR progress"
-                            aria-valuenow={ocrProgress}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                          >
-                            <span style={{ width: `${ocrProgress}%` }} />
-                          </div>
-                          <p>
-                            {ocrProgress}% complete
-                            {ocrEtaSeconds ? ` · about ${ocrEtaSeconds}s left` : ""}
-                          </p>
+                          {activeBatchItems.length === 1 ? (
+                            <>
+                              {/* Progress events are per file, so a single file
+                                  has none until it finishes — a percent meter
+                                  would sit at 0% for the whole run and look
+                                  like a hang. */}
+                              <div className="progress-meter indeterminate" role="progressbar" aria-label="OCR running" />
+                              <p>Converting… this can take several minutes per hour of video.</p>
+                            </>
+                          ) : (
+                            <>
+                              <div
+                                className="progress-meter"
+                                role="progressbar"
+                                aria-label="OCR progress"
+                                aria-valuenow={ocrProgress}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                              >
+                                <span style={{ width: `${ocrProgress}%` }} />
+                              </div>
+                              <p>
+                                {ocrProgress}% complete
+                                {ocrEtaSeconds ? ` · about ${ocrEtaSeconds}s left` : ""}
+                              </p>
+                            </>
+                          )}
+                          <button className="danger" type="button" onClick={stopBatch}>
+                            Stop
+                          </button>
                         </div>
 	                      ) : ocrRunStatus === "complete" ? (
                         <>
+                          {visibleSrtFiles.length ? (
+                            <ul className="srt-file-list">
+                              {visibleSrtFiles.map((path) => (
+                                <li key={path}>
+                                  <span>{path}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                           <div className="result-actions">
                             <button
                               className="primary"
                               type="button"
+                              disabled={!visibleSrtFiles.length}
                               onClick={() => revealOutputs(visibleSrtFiles)}
                             >
                               Show SRT files
@@ -1665,7 +1826,7 @@ export function SubtitleWorkbench() {
                       </p>
                     </>
                   )}
-	                  {isOcrTool ? (
+	                  {isSubtitleTool ? (
 	                    <>
 	                      <h2>Language choices</h2>
 	                      <p>
