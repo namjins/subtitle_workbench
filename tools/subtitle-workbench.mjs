@@ -20,6 +20,8 @@ const ocrScript = join(root, "tools", "ocr_image_subs.mjs");
 const benchmarkScript = join(root, "tools", "benchmark_ocr.mjs");
 const missingImagesScript = join(root, "tools", "extract_missing_sup_images.mjs");
 
+/** @typedef {Error & {exitStatus?: number}} CliError */
+
 const usage = `
 Subtitle Workbench CLI
 
@@ -101,7 +103,7 @@ function run(command, args, options = {}) {
     throw new Error(`${command} failed: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    const error = new Error(`${command} exited with ${result.status}`);
+    const error = /** @type {CliError} */ (new Error(`${command} exited with ${result.status}`));
     error.exitStatus = result.status;
     throw error;
   }
@@ -149,7 +151,7 @@ async function extractEnglish() {
   );
   // The shell version exited 0 even when every track failed.
   if (result.failures.length) {
-    const error = new Error(`${result.failures.length} file(s) failed to extract.`);
+    const error = /** @type {CliError} */ (new Error(`${result.failures.length} file(s) failed to extract.`));
     error.exitStatus = 1;
     throw error;
   }
@@ -242,7 +244,7 @@ async function imageOcr(mode) {
       `${failures.length} of ${inputs.length} file(s) failed:\n` +
         failures.map((item) => `  ${basename(item.input)}\n`).join(""),
     );
-    const error = new Error(`${failures.length} file(s) failed to convert.`);
+    const error = /** @type {CliError} */ (new Error(`${failures.length} file(s) failed to convert.`));
     error.exitStatus = 1;
     throw error;
   }
@@ -274,7 +276,7 @@ function doctor() {
     process.stdout.write(formatDoctorReport(report));
   }
   if (!report.summary.ready) {
-    const error = new Error("Missing required subtitle tool dependencies.");
+    const error = /** @type {CliError} */ (new Error("Missing required subtitle tool dependencies."));
     error.exitStatus = 1;
     throw error;
   }
@@ -313,7 +315,9 @@ async function startUi() {
     .then(({ sweepStaleScratch }) => sweepStaleScratch())
     .catch(() => {});
 
-  await new Promise((resolvePromise) => server.listen(port, host, resolvePromise));
+  await new Promise((resolvePromise) =>
+    server.listen(port, host, () => resolvePromise(undefined)),
+  );
   // In dev the page lives on the Vite origin — pointing the banner (and the
   // browser below) at the bridge would open {"error":"Not found"}.
   const url = dev ? "http://localhost:3000/" : `http://${host}:${port}/`;
@@ -329,6 +333,7 @@ async function startUi() {
   }
 
   if (!hasFlag("--no-open")) {
+    /** @type {[string, string[]]} */
     const opener =
       process.platform === "darwin"
         ? ["open", [url]]
@@ -405,5 +410,5 @@ async function main() {
 
 main().catch((error) => {
   process.stderr.write(`${error.message}\n`);
-  process.exit(error.exitStatus ?? 1);
+  process.exit(/** @type {CliError} */ (error).exitStatus ?? 1);
 });
