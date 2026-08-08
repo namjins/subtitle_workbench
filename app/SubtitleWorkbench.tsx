@@ -5,6 +5,7 @@ import {
   bridgeVersion,
   extractBridgeVideo,
   fetchBridgeDoctorReport,
+  type BridgeDoctorReport,
   inspectBridgeVideo,
   pickBridgeFile,
   pickBridgeFiles,
@@ -224,9 +225,32 @@ export function SubtitleWorkbench() {
   // 5.4 install looked green while quietly dropping low-contrast cues.
   const [dependencyWarnings, setDependencyWarnings] = useState<string[]>([]);
 
+  // Raw report retained for "Copy diagnostics" — the one artefact a bug
+  // report needs (installed tools + versions + app version + last error).
+  const lastDoctorReport = useRef<BridgeDoctorReport | null>(null);
+
+  async function copyDiagnostics() {
+    const diagnostics = JSON.stringify(
+      {
+        appVersion: bridgeVersion(),
+        lastBridgeError: bridgeError || null,
+        doctor: lastDoctorReport.current,
+      },
+      null,
+      2,
+    );
+    try {
+      await navigator.clipboard.writeText(diagnostics);
+    } catch {
+      // Clipboard can be unavailable (permissions); the console still helps.
+      console.log(diagnostics);
+    }
+  }
+
   async function refreshDoctorReport() {
     try {
       const report = await fetchBridgeDoctorReport();
+      lastDoctorReport.current = report;
       setMissingDependencies(
         report.summary.ready
           ? null
@@ -1053,6 +1077,9 @@ export function SubtitleWorkbench() {
           <button type="button" onClick={() => void refreshDoctorReport()}>
             Re-check
           </button>
+          <button type="button" onClick={() => void copyDiagnostics()}>
+            Copy diagnostics
+          </button>
         </section>
       ) : null}
 
@@ -1062,6 +1089,9 @@ export function SubtitleWorkbench() {
           {dependencyWarnings.join(" ")}
           <button type="button" onClick={() => void refreshDoctorReport()}>
             Re-check
+          </button>
+          <button type="button" onClick={() => void copyDiagnostics()}>
+            Copy diagnostics
           </button>
         </section>
       ) : null}
