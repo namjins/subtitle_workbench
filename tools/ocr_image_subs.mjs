@@ -251,7 +251,11 @@ async function extractSubIdxImages(input, workingDirectory, jobs) {
     Array.from({ length: Math.min(jobs, frames.length) }, () => worker()),
   );
 
-  return prepared.filter(Boolean);
+  // framesWritten distinguishes "ffmpeg read no subtitle data at all" (a
+  // damaged or wrong-format container) from "frames were rendered but every one
+  // was judged blank" (a rendering failure). The old code reported a literal
+  // "1 display set" for subidx, which asserted a count it never measured.
+  return { images: prepared.filter(Boolean), framesWritten: frames.length };
 }
 
 async function convert(
@@ -273,31 +277,63 @@ async function convert(
   const workingDirectory = await mkdtemp(join(scratchRoot, "subtitle-ocr-"));
 
   try {
-    const [packets, extractedImages] =
-      mode === "sup-to-srt"
-        ? [[], await extractPgsPreviewImages(input, workingDirectory, Infinity)]
-        : [[], await extractSubIdxImages(input, workingDirectory, jobs)];
+    let extractedImages;
+    let framesWritten;
+    if (mode === "sup-to-srt") {
+      extractedImages = await extractPgsPreviewImages(input, workingDirectory, Infinity);
+      framesWritten = extractedImages.length;
+    } else {
+      ({ images: extractedImages, framesWritten } = await extractSubIdxImages(
+        input,
+        workingDirectory,
+        jobs,
+      ));
+    }
     const images = limit === null ? extractedImages : extractedImages.slice(0, limit);
 
     if (!images.length) {
       // Distinguish "not a subtitle file we can read" from "a subtitle file
       // that genuinely shows nothing". Blank forced/overlay tracks are real —
       // several exist in the fixture corpus, with correctly empty reference
-      // SRTs — so failing on them would be wrong. Failing only when the
-      // container has no display sets at all still catches the damaged and
-      // wrong-format cases this check was added for.
-      const displaySets =
-        mode === "sup-to-srt" ? await countPgsDisplaySets(input) : 1;
-      if (!displaySets) {
+      // SRTs — so failing on them would be wrong.
+      if (mode === "sup-to-srt") {
+        const displaySets = await countPgsDisplaySets(input);
+        if (!displaySets) {
+          throw new Error(
+            `No subtitle data could be read from ${basename(input)}. ` +
+              "The file may be empty, damaged, or not the format this mode expects.",
+          );
+        }
+        await writeFile(output, toSrtDocument(""), "utf8");
+        process.stderr.write(
+          `Wrote 0 cues to ${output} (${displaySets} display set(s) contained no visible subtitles)\n`,
+        );
+        return;
+      }
+
+      // subidx: no display-set count exists, so use the frame count ffmpeg
+      // actually wrote.
+      if (!framesWritten) {
         throw new Error(
           `No subtitle data could be read from ${basename(input)}. ` +
             "The file may be empty, damaged, or not the format this mode expects.",
         );
       }
-
+      if (limit === null) {
+        // Frames were rendered and every one was judged blank. That is a
+        // rendering failure (a palette/ImageMagick regression), not an empty
+        // track — writing an empty SRT and exiting 0 here would be the
+        // "report success for work that did not happen" bug the project has
+        // removed three times. A --limit run is exempt: it may legitimately
+        // slice to nothing.
+        throw new Error(
+          `Extracted ${framesWritten} frame(s) from ${basename(input)} but every one was blank ` +
+            "after rendering. This is a rendering failure, not an empty subtitle track.",
+        );
+      }
       await writeFile(output, toSrtDocument(""), "utf8");
       process.stderr.write(
-        `Wrote 0 cues to ${output} (${displaySets} display set(s) contained no visible subtitles)\n`,
+        `Wrote 0 cues to ${output} (${framesWritten} frame(s), none visible after the --limit slice)\n`,
       );
       return;
     }
@@ -345,7 +381,7 @@ async function convert(
 
     function storeResult(index, ocrResult) {
       const text = ocrResult.text;
-      const timing = packets[index] ?? {
+      const timing = {
         start: images[index].pts ?? index * 3,
         end:
           images[index].endPts ??
@@ -388,6 +424,32 @@ async function convert(
 
       await Promise.all(
         Array.from({ length: Math.min(jobs, representatives.length) }, () => worker()),
+      );
+    }
+
+    // A whole-engine failure — every recognition erroring out — must not be
+    // reported as a successful conversion. `blank-result` is excluded: a
+    // legitimately blank frame is not a failure. If every representative that
+    // ran carries a real engine failure, the recogniser never worked and the
+    // run must exit non-zero rather than write whatever empty SRT falls out.
+    const isEngineFailure = (warnings) =>
+      Array.isArray(warnings) &&
+      warnings.some(
+        (warning) =>
+          warning.startsWith("vision-failed") || warning === "vision-missing-result",
+      );
+    const engineFailures = representatives.filter((index) =>
+      isEngineFailure(ocrByIndex[index]?.warnings),
+    );
+    for (const index of engineFailures) {
+      for (const warning of ocrByIndex[index].warnings) {
+        process.stderr.write(`  ${warning}\n`);
+      }
+    }
+    if (representatives.length > 0 && engineFailures.length === representatives.length) {
+      throw new Error(
+        `Every image failed OCR (${engineFailures.length}/${representatives.length}); ` +
+          "the recogniser did not run. See the warnings above.",
       );
     }
 

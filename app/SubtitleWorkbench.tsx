@@ -856,9 +856,16 @@ export function SubtitleWorkbench() {
           (event) => {
             if (!isCurrentRun()) return;
 
-            if (event.output && typeof event.output === "string") {
-              // job-started and job-finished both carry `output`, so the same
-              // file arrived twice and rendered with duplicate React keys.
+            if (
+              event.type === "job-finished" &&
+              event.output &&
+              typeof event.output === "string"
+            ) {
+              // Record the file only on job-finished. job-started also carries
+              // `output`, but recording it there listed a file before OCR had
+              // written a single byte — optimism this codebase removes
+              // everywhere, and actively wrong the moment a partial batch
+              // surfaces its results.
               if (!outputs.includes(event.output)) outputs.push(event.output);
               setCompletedSrtFiles([...outputs]);
             }

@@ -128,6 +128,20 @@ test("writes an empty SRT for a track that renders nothing", { skip: !canOcr && 
   });
 });
 
+test("subidx refuses to run without the matching .sub sidecar", async () => {
+  // VobSub timing/palette live in the .idx, the bitmaps in the .sub; the .idx
+  // alone decodes to nothing. This must fail loudly rather than write an empty
+  // SRT and exit 0. (No external tools needed — the check precedes ffmpeg.)
+  await withTempDir(async (dir) => {
+    const idx = join(dir, "movie.idx");
+    await writeFile(idx, "# VobSub index\nsize: 720x480\n");
+    const result = runCli(["subidx-to-srt", idx, "--lang", "eng", "--out", join(dir, "movie.srt")]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Matching \.sub file not found/u);
+    assert.equal(existsSync(join(dir, "movie.srt")), false);
+  });
+});
+
 test("keeps converting a batch after one file fails", { skip: !canOcr && "OCR tools unavailable" }, async () => {
   await withTempDir(async (dir) => {
     const good = join(dir, "good.sup");
