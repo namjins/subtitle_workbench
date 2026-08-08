@@ -1,8 +1,7 @@
 # Subtitle Workbench
 
-Convert image-based and timed-text subtitles to SRT, locally. Nothing is
-uploaded anywhere — the OCR, the decoding and the file writing all happen on
-your machine.
+Convert image-based subtitles to SRT, locally. Nothing is uploaded anywhere —
+the OCR, the decoding and the file writing all happen on your machine.
 
 | Tool | Input | What it does |
 | --- | --- | --- |
@@ -123,6 +122,10 @@ npm run doctor
 npm run app
 ```
 
+The examples below use `npm run cli --`, which works from a source checkout.
+With the package installed globally, replace `npm run cli --` with
+`subtitle-workbench` — the commands are otherwise identical.
+
 ## Run the app
 
 ```bash
@@ -148,6 +151,13 @@ npm run cli -- --help
 ```bash
 npm run cli -- sup-to-srt movie.sup --lang eng
 npm run cli -- sup-to-srt *.sup --lang eng --out-dir ./srt
+```
+
+On Windows, PowerShell does not expand `*.sup` for you — pass the files
+explicitly:
+
+```powershell
+npm run cli -- sup-to-srt (Get-ChildItem *.sup).FullName --lang eng --out-dir ./srt
 ```
 
 **DVD VobSub subtitles** — pass the `.idx`; the matching `.sub` must sit beside it.
@@ -184,15 +194,39 @@ whole disc.
 | `--jobs auto` \| `N` | Parallelism. `auto` reserves one core for the rest of your machine. |
 | `--lang eng` | OCR language. Needs matching Tesseract language data installed. |
 | `--ocr-engine auto` | See below. |
+| `--text-cleanup generic` \| `fitted` | OCR text cleanup profile. `fitted` applies corrections tuned on the reference corpus. |
 | `--skip-existing` | Leave already-converted files alone. |
 | `--no-cache` | Reconvert even when a cached result exists (see below). |
 | `--quiet` | Suppress per-cue progress. |
 
 Finished OCR conversions are cached by the *content* of the source file, so
 converting the same disc again — under any filename, to any destination — is
-instant. Each reuse says which app version produced the cached result; if
-that version is older than the one you are running, pass `--no-cache` to
-reconvert, which replaces the cached copy. Only the latest result is kept.
+instant. The cache invalidates itself when the recogniser changes, when this
+app's output format is revised, or when a better engine becomes available
+(installing the Xcode Command Line Tools on a Mac); pass `--no-cache` to force
+a reconversion at any time. Only the latest result is kept per source.
+
+### Where things are stored
+
+| What | Where |
+| --- | --- |
+| macOS | `~/Library/Caches/subtitle-workbench` |
+| Windows | `%LOCALAPPDATA%\subtitle-workbench\Cache` |
+| Linux | `$XDG_CACHE_HOME/subtitle-workbench` (default `~/.cache/...`) |
+
+Conversion results, OCR scratch space, and the compiled Vision helper all live
+under that one directory. Nothing evicts it automatically, so it grows with the
+number of distinct sources converted — deleting the whole directory is always
+safe and only costs reconversion time.
+
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `SUBTITLE_WORKBENCH_CACHE_DIR` | Override the cache directory above. |
+| `SUBTITLE_WORKBENCH_BRIDGE_PORT` | Port for `ui` / the bridge (default 8765). |
+| `SUBTITLE_WORKBENCH_BRIDGE_HOST` | Bind address for the bridge. Non-loopback values are refused by the bridge's own Host check — this cannot be used to share the UI on a network. |
+| `SUBTITLE_WORKBENCH_OCR_COMMAND` | External recogniser command (see "Bringing your own recogniser"). |
 
 ## OCR engines
 
@@ -201,10 +235,14 @@ single engine wins everywhere:
 
 | Format | Engine |
 | --- | --- |
-| SUP (PGS), macOS | probes each track, picks Tesseract or Apple Vision |
+| SUP (PGS), macOS with Xcode Command Line Tools | probes each track, picks Tesseract or Apple Vision |
 | SUP (PGS), elsewhere | Tesseract |
-| SUB/IDX (VobSub), macOS | Apple Vision |
+| SUB/IDX (VobSub), macOS with Xcode Command Line Tools | Apple Vision |
 | SUB/IDX (VobSub), elsewhere | Tesseract |
+
+Apple Vision needs the Swift compiler from the Xcode Command Line Tools
+(`xcode-select --install`). Without it, macOS quietly uses Tesseract like
+every other platform — `doctor` reports whether `swiftc` was found.
 
 Preprocessing adapts to each disc's rendering style per image — drop
 shadows, low-contrast fills, and hollow outline-drawn glyphs are detected

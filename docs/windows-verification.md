@@ -4,7 +4,7 @@ What CI cannot prove on Windows, to be run once on a real Windows machine
 (and again before each release once distribution exists). CI covers the
 conversion pipeline end to end on committed fixtures; this list is the
 GUI-and-hardware remainder. Record results (pass/fail, numbers, oddities)
-in RUNNING_NOTES.
+in the maintainer's working notes (not published with this repo).
 
 Results of the first run, on Windows 11, are in
 `windows-verification-results.md`. Every item below was run; eight findings,
@@ -48,7 +48,7 @@ some frames as empty and drops those cues.
 ## OCR quality (needs the local media corpus)
 
 - [ ] Copy the `Subtitle Examples` and `sub:idx examples` corpora over and
-      run `npm run ocr:gate`. Record the numbers in RUNNING_NOTES next to
+      run `npm run ocr:gate`. Record the numbers in the working notes next to
       the macOS baselines — the Windows Tesseract build differs and small
       CER drift is expected; large drift is a finding.
 

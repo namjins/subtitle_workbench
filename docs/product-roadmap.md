@@ -52,9 +52,15 @@ CER points — see `portable-ocr-plan.md` for the bar to revive it).
      release channel, not ours), so the walkthrough carries it.
    - Auto-update and uninstall story.
 
-5. **Smaller known items** — see RUNNING_NOTES "Outstanding": preferences in
-   OS app-data, `--skip-existing` TOCTOU and job events, DOM tests replacing
-   the source-grep tests, per-job log path in the UI.
+5. **Smaller known items** (tracked in the maintainer's working notes, which
+   are not published with this repo): preferences in OS app-data,
+   `--skip-existing` TOCTOU and job events, DOM tests replacing the
+   source-grep tests, per-job log path in the UI.
+
+   **Known engine work, not blocking v1**: the portable-OCR decision (ONNX /
+   PP-OCR — see `portable-ocr-plan.md`; currently dropped in favour of
+   user-installed Tesseract), and residual VobSub timing drift (a handful of
+   missing cues and end mismatches on the timing-first benchmark).
 
 6. **Ship** — `npm publish` + `git tag` when the user calls it complete
    (decided: ship once complete, not incrementally).

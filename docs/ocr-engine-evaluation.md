@@ -34,17 +34,20 @@ Pros:
 - Already integrated in the CLI.
 - Good enough on the reference PGS sample after targeted preprocessing:
   668 generated cues matched 668 provided reference cue timestamps.
-- Current full SUP gate passes with 26,415 / 26,415 cues, 0 missing, 0 extra,
-  0 end mismatches, and 0.68% total CER.
+- Full SUP gate (as of 2026-08-07, 45 fixtures): 28,550 cues, 0 missing,
+  0 extra, 0 end mismatches, 0.66% total CER — identical with
+  `--ocr-engine tesseract-accurate` forced, so the portable path now equals
+  the macOS one on SUP.
 
 Cons:
 
 - Accuracy still trails the reference text in some places.
 - Small or stylized cues need fallback preprocessing.
 - Confidence scores are useful but not complete enough on their own.
-- Portable SUB/IDX quality is not yet good enough on the hard VobSub set:
-  91 missing cues and 16.68% CER in the current timing-first benchmark, driven
-  mainly by Gosford Park and Spy Game.
+- Portable SUB/IDX trails Vision slightly on the hard VobSub set
+  (as of 2026-08-07, after the histogram repairs): 10 missing cues and 2.47%
+  CER vs Vision's 6 missing and 1.83% in the timing-first benchmark. (Before
+  those repairs it was 91 missing / 16.68% the same morning.)
 
 ### macOS Vision
 
@@ -63,18 +66,21 @@ Cons:
 - Requires `swiftc` for the local helper build in the current implementation.
 - Not suitable as the cross-platform answer.
 - Slightly worse than tuned Tesseract on clean outlined SUP fonts
-  (The Matrix: 1.05% vs 0.64% CER) — but far better on shadowed ones
-  (Stargate: 2.16% vs 15.72%), which is why SUP `auto` on macOS probes each
-  track instead of committing to either engine.
+  (The Matrix: 1.05% vs 0.64% CER). It used to be far better on shadowed ones,
+  but the `shadow-strip` repair closed that gap (Stargate: 0.07% on Tesseract
+  now; the regeneration log shows zero Vision switches). SUP `auto` on macOS
+  keeps the probe as a safety net for the next rendering style Tesseract
+  cannot read, not as a corrective it currently needs.
 
-Current SUB/IDX Vision timing-first result:
+SUB/IDX Vision timing-first result (as of 2026-08-07, after the
+frame-timestamp fix):
 
-- 25 missing cues
+- 6 missing cues
 - 3 true extra cues
 - 23 unverified forced/overlay cues from an empty reference file
-- 15 shifted-text diagnostics
-- 0 end mismatches
-- 2.05% CER
+- 0 shifted-text diagnostics
+- 2 end mismatches
+- 1.83% CER
 
 ### RapidOCR / PaddleOCR via ONNX Runtime
 
@@ -156,14 +162,14 @@ Cons:
    - SUB/IDX elsewhere: `tesseract-accurate`
 2. Preserve benchmark metadata so known-bad references do not hide actual
    engine quality.
-3. Add debug-output support that keeps representative preprocessed images and
-   raw OCR outputs when requested.
-4. Add bitmap/result caching keyed by normalized image hash so repeated subtitle
-   images do not get OCR'd repeatedly.
-5. Experiment with RapidOCR or PaddleOCR recognition models through ONNX Runtime
+3. Experiment with RapidOCR or PaddleOCR recognition models through ONNX Runtime
    through the `external-command` sidecar adapter.
-6. Add line segmentation and glyph/template matching after benchmarks show where
+4. Add line segmentation and glyph/template matching after benchmarks show where
    neural OCR still loses.
+
+Shipped since this list was written: debug output (`--keep-temp` retains the
+preprocessed images), and per-image result dedup keyed by content hash
+(`lib/image-dedupe.mjs`) so identical subtitle bitmaps are recognised once.
 
 ## What Not To Do Yet
 
@@ -174,19 +180,9 @@ Cons:
 - Do not copy decoder or OCR code from other subtitle apps without a license
   review.
 
-## Current Benchmark Anchor
+## Benchmark Anchor
 
-Using:
-
-- Source: `/path/to/samples/sample-track.sup`
-- Reference: `/path/to/sample-track-eng.srt`
-
-Current Tesseract hybrid result:
-
-- Reference cues: 668
-- Generated cues: 668
-- Missing timestamp matches: 0
-- Extra timestamp matches: 0
-- End-time mismatches: 0
-- Exact text matches: 462 / 668
-- Text edit distance: 734 / 18,374 reference characters
+The authoritative, current numbers live in the gate itself: run
+`npm run ocr:gate` against the local corpus (see `docs/fixtures.md`). As of
+2026-08-07 the full 45-fixture SUP gate reads 28,550 cues, 0 missing, 0 extra,
+0 end mismatches, 0.66% CER.

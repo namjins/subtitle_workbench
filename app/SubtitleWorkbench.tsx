@@ -311,8 +311,9 @@ export function SubtitleWorkbench() {
   );
   // Only ever real paths reported by the CLI. There used to be a predicted
   // list here (`${name}-${language}.srt`) shown when no real output arrived,
-  // which could never match what the CLI actually writes (`<base>.srt`) and
-  // was displayed even when the run had failed outright.
+  // which could never match what the CLI actually writes (`<base>-<lang>.srt`
+  // — the prediction used the name *with extension*) and was displayed even
+  // when the run had failed outright.
   const visibleSrtFiles = completedSrtFiles;
   const currentBatchItem =
     batchLanguageId === null

@@ -18,6 +18,7 @@ npm run lint
 npm run typecheck
 npm run build
 npm run ocr:gate    # full SUP quality gate; needs local media, see docs/fixtures.md
+npm run cli:native  # macOS: same CLI with /opt/homebrew/bin on PATH (GUI-launch workaround)
 npm run cli -- --help
 ```
 
@@ -29,8 +30,10 @@ tests need a build or a download, that is a regression.
 - `app/` — the UI. One `"use client"` component (`SubtitleWorkbench.tsx`) plus a
   bridge client and a browser PGS previewer. Plain Vite SPA, no framework server.
 - `lib/` — everything reusable. `subtitle-core.mjs` owns *all* text-format
-  conversion; `pgs-peek.mjs` is the PGS decoder; `local-bridge-server.mjs` is the
-  HTTP surface; `srt-metrics.mjs` is the benchmark maths.
+  conversion; `pgs-decoder.mjs` is the PGS decoder, deliberately shared with the
+  browser preview (`app/pgsPreview.ts`), while `pgs-peek.mjs` only sinks its
+  output to PNG; `local-bridge-server.mjs` is the HTTP surface;
+  `srt-metrics.mjs` is the benchmark maths.
 - `tools/` — CLI entry points. `subtitle-workbench.mjs` is the front door.
 - `tests/` — `node --test`. Fixtures in `tests/fixtures/`.
 

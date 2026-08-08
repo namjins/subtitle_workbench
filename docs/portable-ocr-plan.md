@@ -10,7 +10,7 @@ Windows and Linux users got materially worse OCR than macOS users where
 Tesseract's failure modes were answered only by Apple Vision. Diagnosing
 each failing title's bitmaps produced three per-image histogram repairs in
 `tesseract-accurate` (`shadow-strip`, `fill-select`, `hollow-fill` — see
-RUNNING_NOTES for each), with these results:
+the maintainer's working notes for each; not published with this repo), with these results:
 
 | Case | Tesseract before | Tesseract now | Vision (macOS only) |
 | --- | --- | --- | --- |
