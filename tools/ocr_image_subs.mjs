@@ -20,6 +20,7 @@ import { cacheDirectory, hasCommand, imageMagickCommand } from "../lib/platform-
 import { normalizeJobs } from "../lib/cpu-jobs.mjs";
 import { createOcrEngine, isMacosVisionAvailable } from "../lib/ocr-tesseract.mjs";
 import { srtTime, toSrtDocument } from "../lib/subtitle-core.mjs";
+import { dedupeByHash, mapBounded } from "../lib/image-dedupe.mjs";
 import { countPgsDisplaySets, extractPgsPreviewImages } from "../lib/pgs-peek.mjs";
 
 const usage = `
@@ -331,18 +332,12 @@ async function convert(
     const ocrByIndex = new Array(images.length);
 
     // Identical subtitle bitmaps recur within a track — a repeated sound cue,
-    // a held caption re-sent as its own display set. OCR is by far the most
-    // expensive step, and identical bytes cannot produce a different reading,
-    // so recognise one representative per distinct image and fan the result
-    // out. Measured at 8.6% of images on a full reference track.
-    const hashes = await Promise.all(images.map((image) => hashFile(image.path)));
-    const firstByHash = new Map();
-    const representatives = [];
-    hashes.forEach((hash, index) => {
-      if (firstByHash.has(hash)) return;
-      firstByHash.set(hash, index);
-      representatives.push(index);
-    });
+    // a held caption re-sent as its own display set. Measured at 8.6% of
+    // images on a full reference track. Hashing is bounded like every other
+    // loop here; the dedup bookkeeping lives in lib/image-dedupe.mjs where the
+    // index alignment is unit-tested.
+    const hashes = await mapBounded(images, jobs, (image) => hashFile(image.path));
+    const { representatives, firstByHash } = dedupeByHash(hashes);
 
     if (!quiet && representatives.length < images.length) {
       process.stderr.write(

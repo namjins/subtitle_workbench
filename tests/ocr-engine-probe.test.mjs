@@ -162,6 +162,31 @@ test("probe engine keeps the default for non-English tracks", async () => {
   assert.equal(selection.engine, defaultEngine);
 });
 
+test("probe engine falls back to the default when the challenger throws", async () => {
+  // Reachable on a Mac where swiftc exists (preflight passes) but the Vision
+  // build fails. A throwing challenger used to reject the whole Promise.all
+  // and kill a conversion plain Tesseract would have completed.
+  const defaultEngine = fakeEngine("default", "Readable text here.", 90);
+  const probe = createSupProbeEngine({
+    defaultEngine,
+    challengerEngine: {
+      name: "broken",
+      requiredBinaries: ["broken"],
+      recognize: async () => {
+        throw new Error("swiftc build failed");
+      },
+      recognizeBatch: async () => {
+        throw new Error("swiftc build failed");
+      },
+    },
+  });
+
+  const selection = await probe.selectEngine(["a.png", "b.png"], { language: "eng" });
+  assert.equal(selection.probed, false);
+  assert.equal(selection.reason, "probe-failed");
+  assert.equal(selection.engine, defaultEngine);
+});
+
 test("probe engine recognises with the default before any selection", async () => {
   const defaultEngine = fakeEngine("default", "Hello there.", 90);
   const probe = createSupProbeEngine({
