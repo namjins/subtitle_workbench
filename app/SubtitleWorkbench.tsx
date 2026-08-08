@@ -224,6 +224,10 @@ export function SubtitleWorkbench() {
   // Tesseract below the version floor). Previously fetched and dropped, so a
   // 5.4 install looked green while quietly dropping low-contrast cues.
   const [dependencyWarnings, setDependencyWarnings] = useState<string[]>([]);
+  // Feedback for the banner's buttons. Re-check on a still-broken install
+  // changes nothing visible and Copy writes silently, so without this both
+  // were indistinguishable from dead buttons. Persistent, no timers.
+  const [doctorActionNote, setDoctorActionNote] = useState("");
 
   // Raw report retained for "Copy diagnostics" — the one artefact a bug
   // report needs (installed tools + versions + app version + last error).
@@ -241,9 +245,13 @@ export function SubtitleWorkbench() {
     );
     try {
       await navigator.clipboard.writeText(diagnostics);
+      setDoctorActionNote("Diagnostics copied to the clipboard.");
     } catch {
       // Clipboard can be unavailable (permissions); the console still helps.
       console.log(diagnostics);
+      setDoctorActionNote(
+        "Clipboard unavailable — diagnostics were printed to the browser console instead.",
+      );
     }
   }
 
@@ -1074,12 +1082,19 @@ export function SubtitleWorkbench() {
           will fail until they are installed. Only English OCR data is checked
           here; other languages are verified when a conversion runs.
           <pre>{missingDependencies.install.join("\n")}</pre>
-          <button type="button" onClick={() => void refreshDoctorReport()}>
+          <button
+            type="button"
+            onClick={async () => {
+              await refreshDoctorReport();
+              setDoctorActionNote(`Re-checked at ${new Date().toLocaleTimeString()}.`);
+            }}
+          >
             Re-check
           </button>
           <button type="button" onClick={() => void copyDiagnostics()}>
             Copy diagnostics
           </button>
+          {doctorActionNote ? <span className="banner-note">{doctorActionNote}</span> : null}
         </section>
       ) : null}
 
@@ -1087,12 +1102,19 @@ export function SubtitleWorkbench() {
         <section className="dependency-warning dependency-warning-soft" role="status">
           <strong>Working, but worth fixing:</strong>{" "}
           {dependencyWarnings.join(" ")}
-          <button type="button" onClick={() => void refreshDoctorReport()}>
+          <button
+            type="button"
+            onClick={async () => {
+              await refreshDoctorReport();
+              setDoctorActionNote(`Re-checked at ${new Date().toLocaleTimeString()}.`);
+            }}
+          >
             Re-check
           </button>
           <button type="button" onClick={() => void copyDiagnostics()}>
             Copy diagnostics
           </button>
+          {doctorActionNote ? <span className="banner-note">{doctorActionNote}</span> : null}
         </section>
       ) : null}
 
