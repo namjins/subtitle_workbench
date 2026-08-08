@@ -311,7 +311,16 @@ Tests run against small fixtures in `tests/fixtures/`.
 `src-tauri/` holds a Tauri shell around the same UI: it starts the local
 bridge on a private port and opens a native window on it, so the bridge's
 job queue, authorization and native file picking are shared with the web
-version. It needs a [Rust toolchain](https://rustup.rs):
+version.
+
+Note the version coupling: the window loads the UI **served by the installed
+`subtitle-workbench` npm package**, not a copy bundled into the app — so
+updating one without the other runs the npm package's UI, whatever its
+version. The page shows the version it is actually running next to its title.
+Installing the desktop app without the npm package does not work at all; the
+shell's error dialog walks through installing it.
+
+It needs a [Rust toolchain](https://rustup.rs):
 
 ```bash
 npm run app:desktop   # tauri dev: builds the UI, compiles the shell, opens the window

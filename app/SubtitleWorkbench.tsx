@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
+  bridgeVersion,
   extractBridgeVideo,
   fetchBridgeDoctorReport,
   inspectBridgeVideo,
@@ -1034,7 +1035,10 @@ export function SubtitleWorkbench() {
     <main className="workbench">
       <section className="topbar" aria-label="Workspace">
         <div>
-          <p className="kicker">Subtitle Workbench</p>
+          <p className="kicker">
+            Subtitle Workbench
+            {bridgeVersion() ? <span className="version-tag"> v{bridgeVersion()}</span> : null}
+          </p>
           <h1>Subtitle workbench</h1>
         </div>
       </section>

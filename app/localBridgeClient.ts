@@ -54,7 +54,15 @@ const bridgeOrigin = import.meta.env.DEV ? "http://127.0.0.1:8765" : "";
 declare global {
   interface Window {
     __SUBTITLE_WORKBENCH_TOKEN__?: string;
+    // Injected by the bridge beside the token. The desktop shell renders
+    // whatever UI the installed npm package serves, so this is the only
+    // version identity the page actually has.
+    __SUBTITLE_WORKBENCH_VERSION__?: string;
   }
+}
+
+export function bridgeVersion(): string | null {
+  return (typeof window === "undefined" ? null : window.__SUBTITLE_WORKBENCH_VERSION__) ?? null;
 }
 
 /**
